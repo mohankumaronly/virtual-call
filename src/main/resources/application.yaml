@@ -44,3 +44,8 @@ brevo:
   from:
     email: ${BREVO_FROM_EMAIL}
     name: ${BREVO_FROM_NAME}
+
+# CORS Configuration
+cors:
+  allowed:
+    origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
