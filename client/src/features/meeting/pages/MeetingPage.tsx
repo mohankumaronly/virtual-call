@@ -133,50 +133,52 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
-        console.log('Received offer from:', message.username);
+        console.log('📩 Received offer from:', message.username);
         isProcessingOfferRef.current = true;
 
         try {
-            // Close existing connection if any
             if (webRTCServiceRef.current) {
+                console.log('🎥 Closing existing WebRTC connection');
                 webRTCServiceRef.current.close();
                 webRTCServiceRef.current = null;
             }
 
-            // Create new WebRTC service
+            console.log('🎥 Creating new WebRTCService for offer');
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
 
-            // ✅ Add local stream FIRST
             if (localStream) {
-                console.log('Adding local stream to peer connection');
+                console.log('📷 Adding local stream to peer connection');
                 webRTCServiceRef.current.setLocalStream(localStream);
+            } else {
+                console.warn('⚠️ No local stream available when handling offer');
             }
 
-            // ✅ Set remote description (this triggers the connection)
-            console.log('Setting remote description...');
+            console.log('📡 Setting remote description...');
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
-            console.log('Remote description set successfully');
+            console.log('✅ Remote description set successfully');
 
-            // ✅ Create and send answer
+            console.log('📡 Creating answer...');
             const answer = await webRTCServiceRef.current.createAnswer();
-            console.log('Answer created, sending...');
+            console.log('✅ Answer created successfully');
 
+            console.log('📤 Sending answer to:', message.userId);
             sendSignal(meetingId!, {
                 type: 'ANSWER',
                 payload: answer,
                 targetUserId: message.userId
             });
+            console.log('📤 Answer sent!');
 
-            // ✅ Process any pending ICE candidates
+            // Process pending ICE candidates
             if (pendingIceCandidatesRef.current.length > 0) {
-                console.log('Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
+                console.log('🔄 Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
                 for (const candidate of pendingIceCandidatesRef.current) {
                     try {
                         await webRTCServiceRef.current.addIceCandidate(candidate);
                         console.log('✅ Pending ICE candidate added');
                     } catch (e) {
-                        console.error('Error adding pending ICE candidate:', e);
+                        console.error('❌ Error adding pending ICE candidate:', e);
                     }
                 }
                 pendingIceCandidatesRef.current = [];
@@ -184,7 +186,7 @@ const MeetingPage: React.FC = () => {
 
             toast.success('Connected to peer!');
         } catch (error) {
-            console.error('Error handling offer:', error);
+            console.error('❌ Error handling offer:', error);
             toast.error('Failed to connect to peer');
         } finally {
             isProcessingOfferRef.current = false;
