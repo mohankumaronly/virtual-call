@@ -22,7 +22,6 @@ const MeetingPage: React.FC = () => {
     const [isJoining, setIsJoining] = useState(false);
     const [participants, setParticipants] = useState<Participant[]>([]);
     const [showCamera, setShowCamera] = useState(false);
-    const [localStream, setLocalStream] = useState<MediaStream | null>(null);
     const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
     const [peerConnectionState, setPeerConnectionState] = useState<string>('disconnected');
     const [isCallActive, setIsCallActive] = useState(false);
@@ -41,6 +40,7 @@ const MeetingPage: React.FC = () => {
     const hasReceivedOfferRef = useRef<boolean>(false);
     const hasJoinedRef = useRef<boolean>(false);
     const hasInitiatedCallRef = useRef<boolean>(false);
+    const localStreamRef = useRef<MediaStream | null>(null);
 
     useEffect(() => {
         if (!meetingId) {
@@ -61,8 +61,8 @@ const MeetingPage: React.FC = () => {
                     leaveMeeting(meetingId);
                 }
             }
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
+            if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach(track => track.stop());
             }
             if (webRTCServiceRef.current) {
                 webRTCServiceRef.current.close();
@@ -86,10 +86,8 @@ const MeetingPage: React.FC = () => {
             const isJoiningUserCreator = message.userId === user?.id;
             console.log('🔍 isJoiningUserCreator:', isJoiningUserCreator);
 
-            // ✅ Only initiate if all conditions are met
             if (isCreatorRef.current && hasJoinedRef.current && !isCallInProgress && !hasInitiatedCallRef.current && !isJoiningUserCreator) {
                 console.log('📞 Creator initiating call with new participant');
-                // ✅ Set the flag BEFORE calling to prevent duplicates
                 hasInitiatedCallRef.current = true;
                 isCallInitiatedRef.current = true;
                 initiateCallWithParticipant(message.userId);
@@ -137,6 +135,26 @@ const MeetingPage: React.FC = () => {
         isProcessingOfferRef.current = true;
 
         try {
+            // ✅ Wait for local stream if not available using ref
+            if (!localStreamRef.current) {
+                console.log('⏳ Waiting for local stream...');
+                let attempts = 0;
+                while (!localStreamRef.current && attempts < 50) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    attempts++;
+                    if (attempts % 10 === 0) {
+                        console.log(`⏳ Still waiting for camera... (${attempts * 100}ms)`);
+                    }
+                }
+
+                if (!localStreamRef.current) {
+                    console.error('❌ Local stream not available after waiting');
+                    toast.error('Camera not ready. Please refresh and try again.');
+                    return;
+                }
+                console.log('✅ Local stream is now available');
+            }
+
             if (webRTCServiceRef.current) {
                 console.log('🎥 Closing existing WebRTC connection');
                 webRTCServiceRef.current.close();
@@ -147,11 +165,9 @@ const MeetingPage: React.FC = () => {
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
 
-            if (localStream) {
+            if (localStreamRef.current) {
                 console.log('📷 Adding local stream to peer connection');
-                webRTCServiceRef.current.setLocalStream(localStream);
-            } else {
-                console.warn('⚠️ No local stream available when handling offer');
+                webRTCServiceRef.current.setLocalStream(localStreamRef.current);
             }
 
             console.log('📡 Setting remote description...');
@@ -170,7 +186,6 @@ const MeetingPage: React.FC = () => {
             });
             console.log('📤 Answer sent!');
 
-            // Process pending ICE candidates
             if (pendingIceCandidatesRef.current.length > 0) {
                 console.log('🔄 Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
                 for (const candidate of pendingIceCandidatesRef.current) {
@@ -232,7 +247,6 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleIceCandidate = async (message: any) => {
-        // ✅ Handle null candidate (gathering complete signal)
         if (!message.payload) {
             console.log('⏳ ICE gathering complete signal received');
             return;
@@ -297,7 +311,6 @@ const MeetingPage: React.FC = () => {
                 });
             } else {
                 console.log('🧊 ICE gathering complete - sending null candidate');
-                // Send null candidate to signal gathering complete
                 sendSignal(meetingId!, {
                     type: 'ICE_CANDIDATE',
                     payload: null,
@@ -312,7 +325,7 @@ const MeetingPage: React.FC = () => {
         console.log('📞 isCallInitiatedRef.current:', isCallInitiatedRef.current);
         console.log('📞 isCreatorRef.current:', isCreatorRef.current);
         console.log('📞 targetUserId:', targetUserId);
-        console.log('📞 localStream exists?', !!localStream);
+        console.log('📞 localStream exists?', !!localStreamRef.current);
 
         if (isCallInProgress) {
             console.log('Call already in progress');
@@ -334,16 +347,16 @@ const MeetingPage: React.FC = () => {
         }
 
         try {
-            if (localStream) {
+            if (localStreamRef.current) {
                 console.log('📞 Setting local stream on WebRTC service');
-                webRTCServiceRef.current.setLocalStream(localStream);
+                webRTCServiceRef.current.setLocalStream(localStreamRef.current);
             } else {
                 console.warn('⚠️ No local stream available!');
             }
 
             console.log('📞 Creating offer...');
             const offer = await webRTCServiceRef.current.createOffer();
-            console.log('📤 OFFER created successfully:', offer);
+            console.log('📤 OFFER created successfully');
 
             console.log('📤 Sending OFFER to:', targetUserId);
             sendSignal(meetingId!, {
@@ -355,7 +368,7 @@ const MeetingPage: React.FC = () => {
             toast('Calling participant...', { icon: '📞' });
         } catch (error) {
             console.error('Error initiating call:', error);
-            toast.error('Failed to initiate call: ' + error);
+            toast.error('Failed to initiate call');
             setIsCallInProgress(false);
             isCallInitiatedRef.current = false;
             hasInitiatedCallRef.current = false;
@@ -433,7 +446,7 @@ const MeetingPage: React.FC = () => {
 
     const handleStreamReady = (stream: MediaStream) => {
         console.log('📷 handleStreamReady called');
-        setLocalStream(stream);
+        localStreamRef.current = stream;
         toast.success('Camera is ready!');
 
         if (!webRTCServiceRef.current) {
