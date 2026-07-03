@@ -17,39 +17,73 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 
     useEffect(() => {
+        console.log('🔴 CameraPreview mounted, starting camera...');
         startCamera();
 
         return () => {
+            console.log('🔴 CameraPreview unmounting, stopping camera...');
             stopCamera();
         };
     }, [audioEnabled, videoEnabled]);
 
     const startCamera = async () => {
+        console.log('📷 startCamera called');
         setIsLoading(true);
         setError(null);
 
         try {
+            console.log('📷 Requesting getUserMedia...');
             const mediaStream = await navigator.mediaDevices.getUserMedia({
                 video: videoEnabled,
                 audio: audioEnabled
             });
 
+            console.log('📷 Stream obtained:', mediaStream);
+            console.log('📷 Video tracks:', mediaStream.getVideoTracks());
+            console.log('📷 Audio tracks:', mediaStream.getAudioTracks());
+
             setStream(mediaStream);
 
             if (videoRef.current) {
+                console.log('📷 Setting srcObject on video element');
                 videoRef.current.srcObject = mediaStream;
-                await videoRef.current.play();
+                
+                // Wait for metadata to load before playing
+                videoRef.current.onloadedmetadata = () => {
+                    console.log('📷 Video metadata loaded');
+                    videoRef.current?.play().then(() => {
+                        console.log('📷 Video playing!');
+                        setIsVideoPlaying(true);
+                    }).catch(err => {
+                        console.error('📷 Error playing video:', err);
+                    });
+                };
+                
+                // Try to play immediately as well
+                try {
+                    await videoRef.current.play();
+                    setIsVideoPlaying(true);
+                    console.log('📷 Video playing immediately');
+                } catch (playErr) {
+                    console.error('📷 Immediate play failed:', playErr);
+                    // Will retry on loadedmetadata
+                }
+            } else {
+                console.error('📷 videoRef.current is null!');
             }
 
             if (onStreamReady) {
+                console.log('📷 Calling onStreamReady callback');
                 onStreamReady(mediaStream);
             }
 
             setIsLoading(false);
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to access camera';
+            console.error('📷 Camera error:', errorMessage);
             setError(errorMessage);
             setIsLoading(false);
             
@@ -60,8 +94,10 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
     };
 
     const stopCamera = () => {
+        console.log('📷 stopCamera called');
         if (stream) {
             stream.getTracks().forEach(track => {
+                console.log(`📷 Stopping ${track.kind} track`);
                 track.stop();
             });
             setStream(null);
@@ -70,6 +106,7 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
         if (videoRef.current) {
             videoRef.current.srcObject = null;
         }
+        setIsVideoPlaying(false);
     };
 
     const toggleVideo = () => {
@@ -77,6 +114,7 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
             const videoTracks = stream.getVideoTracks();
             videoTracks.forEach(track => {
                 track.enabled = !track.enabled;
+                console.log(`📷 Video track enabled: ${track.enabled}`);
             });
         }
     };
@@ -86,6 +124,7 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
             const audioTracks = stream.getAudioTracks();
             audioTracks.forEach(track => {
                 track.enabled = !track.enabled;
+                console.log(`📷 Audio track enabled: ${track.enabled}`);
             });
         }
     };
@@ -109,7 +148,10 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
                     <p className="mt-4 text-red-400">Camera unavailable</p>
                     <p className="text-sm text-gray-400 mt-2">{error}</p>
                     <button
-                        onClick={startCamera}
+                        onClick={() => {
+                            console.log('📷 Retry button clicked');
+                            startCamera();
+                        }}
                         className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                     >
                         Try Again
@@ -123,31 +165,46 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
         <div className="relative bg-gray-900 rounded-lg overflow-hidden">
             <video
                 ref={videoRef}
-                className="w-full h-auto"
+                className="w-full h-auto min-h-[200px] bg-gray-900"
                 autoPlay
                 playsInline
                 muted
+                style={{ display: 'block' }}
             />
             
+            {!isVideoPlaying && !isLoading && !error && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-50">
+                    <div className="text-white text-center">
+                        <span className="text-3xl">⏳</span>
+                        <p className="mt-2 text-sm">Starting camera...</p>
+                    </div>
+                </div>
+            )}
+
             {/* Controls overlay */}
             <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex space-x-2">
                 <button
                     onClick={toggleVideo}
                     className="px-3 py-2 bg-gray-800 text-white rounded hover:bg-gray-700 text-sm"
                 >
-                    {stream?.getVideoTracks()[0]?.enabled ? '📹' : '🚫📹'}
+                    {stream?.getVideoTracks()[0]?.enabled !== false ? '📹' : '🚫📹'}
                 </button>
                 <button
                     onClick={toggleAudio}
                     className="px-3 py-2 bg-gray-800 text-white rounded hover:bg-gray-700 text-sm"
                 >
-                    {stream?.getAudioTracks()[0]?.enabled ? '🎤' : '🚫🎤'}
+                    {stream?.getAudioTracks()[0]?.enabled !== false ? '🎤' : '🚫🎤'}
                 </button>
             </div>
 
             {/* Status label */}
             <div className="absolute top-4 left-4 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
-                📹 Your Camera
+                📹 Your Camera {isVideoPlaying ? '🟢' : '⏳'}
+            </div>
+
+            {/* Video info */}
+            <div className="absolute bottom-4 right-4 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+                {stream?.getVideoTracks()[0]?.getSettings().width || '?'}x{stream?.getVideoTracks()[0]?.getSettings().height || '?'}
             </div>
         </div>
     );
