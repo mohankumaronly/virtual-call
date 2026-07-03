@@ -74,7 +74,22 @@ const MeetingPage: React.FC = () => {
         if (message.type === 'USER_JOINED') {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
-            if (meeting?.createdBy === user?.id && hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current) {
+            
+            // ✅ ONLY the creator initiates the call
+            const isCreator = meeting?.createdBy === user?.id;
+            const canInitiate = isCreator && hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current;
+            
+            console.log('🔍 Call initiation check:', { 
+                isCreator, 
+                hasJoined, 
+                isCallInProgress, 
+                isInitiator, 
+                isCallInitiatedRef: isCallInitiatedRef.current,
+                userId: user?.id,
+                createdBy: meeting?.createdBy
+            });
+            
+            if (canInitiate) {
                 console.log('📞 Creator initiating call with new participant');
                 isCallInitiatedRef.current = true;
                 setIsInitiator(true);
@@ -98,7 +113,6 @@ const MeetingPage: React.FC = () => {
             console.log('📩 Received ICE_CANDIDATE from:', message.username);
             handleIceCandidate(message);
         } else if (message.type === 'SIGNAL') {
-            // ✅ Handle SIGNAL messages - extract the actual payload
             const payload = message.payload;
             console.log('📩 Received SIGNAL, payload type:', payload?.type);
 
@@ -408,6 +422,12 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
+        // ✅ Only creator can start the call
+        if (meeting?.createdBy !== user?.id) {
+            toast('Only the meeting creator can start the call', { icon: 'ℹ️' });
+            return;
+        }
+
         if (isInitiator || isCallInProgress || isCallInitiatedRef.current) {
             toast('Call already in progress', { icon: 'ℹ️' });
             return;
@@ -527,7 +547,8 @@ const MeetingPage: React.FC = () => {
                             >
                                 📋 Copy Link
                             </button>
-                            {hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current && (
+                            {/* ✅ Only show Start Call for creator */}
+                            {hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current && meeting?.createdBy === user?.id && (
                                 <button
                                     onClick={handleStartCall}
                                     disabled={participants.length < 2}
