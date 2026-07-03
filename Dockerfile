@@ -1,31 +1,22 @@
-# Use Eclipse Temurin (the new official OpenJDK distribution)
-FROM eclipse-temurin:21-jdk-alpine
+# Build Stage
+FROM maven:3.9.9-eclipse-temurin-21 AS build
 
-# Set working directory
 WORKDIR /app
 
-# Copy Maven wrapper and pom.xml
-COPY mvnw .
-COPY .mvn .mvn
 COPY pom.xml .
-
-# Make mvnw executable
-RUN chmod +x mvnw
-
-# Download dependencies (cached layer)
-RUN ./mvnw dependency:go-offline
-
-# Copy source code
+COPY .mvn .mvn
+COPY mvnw .
 COPY src src
 
-# Build the application
-RUN ./mvnw clean package -DskipTests
+RUN mvn clean package -DskipTests
 
-# Copy the JAR file
-RUN cp target/*.jar app.jar
+# Run Stage
+FROM eclipse-temurin:21-jre
 
-# Expose port
+WORKDIR /app
+
+COPY --from=build /app/target/*.jar app.jar
+
 EXPOSE 8080
 
-# Run the application
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java","-jar","app.jar"]
