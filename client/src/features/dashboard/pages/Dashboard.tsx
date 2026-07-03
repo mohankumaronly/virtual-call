@@ -6,7 +6,7 @@ import MeetingHistory from '../components/MeetingHistory';
 
 const Dashboard: React.FC = () => {
     const { user } = useAuth();
-    const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+    const [, setSelectedUserId] = useState<number | null>(null);
 
     return (
         <div className="max-w-7xl mx-auto p-4">
