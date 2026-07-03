@@ -28,7 +28,6 @@ const MeetingPage: React.FC = () => {
     const [peerConnectionState, setPeerConnectionState] = useState<string>('disconnected');
     const [isCallActive, setIsCallActive] = useState(false);
     const [isCallInProgress, setIsCallInProgress] = useState(false);
-    // ✅ ADD THIS - Tracks who initiated the call
     const [isInitiator, setIsInitiator] = useState(false);
 
     const { user } = useAuth();
@@ -37,8 +36,8 @@ const MeetingPage: React.FC = () => {
 
     const webRTCServiceRef = useRef<WebRTCService | null>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
-    // ✅ ADD THIS - Prevents duplicate offer processing
     const isProcessingOfferRef = useRef<boolean>(false);
+    const pendingIceCandidatesRef = useRef<any[]>([]);
 
     useEffect(() => {
         if (!meetingId) {
@@ -74,7 +73,6 @@ const MeetingPage: React.FC = () => {
         if (message.type === 'USER_JOINED') {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
-            // ✅ Only creator initiates call when someone joins
             if (meeting?.createdBy === user?.id && hasJoined && !isCallInProgress && !isInitiator) {
                 console.log('📞 Creator initiating call with new participant');
                 setIsInitiator(true);
@@ -85,7 +83,6 @@ const MeetingPage: React.FC = () => {
         } else if (message.type === 'USER_LEFT') {
             toast(`${message.username} left the meeting`, { icon: '👋' });
             fetchParticipants();
-            // ✅ Reset initiator status when someone leaves
             setIsInitiator(false);
             setIsCallInProgress(false);
         } else if (message.type === 'OFFER') {
@@ -113,7 +110,6 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleOffer = async (message: any) => {
-        // ✅ Prevent duplicate offer processing
         if (isProcessingOfferRef.current) {
             console.log('Already processing an offer, ignoring...');
             return;
@@ -122,26 +118,46 @@ const MeetingPage: React.FC = () => {
         console.log('Received offer from:', message.username);
         isProcessingOfferRef.current = true;
 
-        // ✅ If we already have a peer connection, close it and create a new one
-        if (webRTCServiceRef.current) {
-            webRTCServiceRef.current.close();
-            webRTCServiceRef.current = null;
-        }
-
-        webRTCServiceRef.current = new WebRTCService();
-        setupWebRTCListeners();
-        if (localStream) {
-            webRTCServiceRef.current.setLocalStream(localStream);
-        }
-
         try {
+            if (webRTCServiceRef.current) {
+                webRTCServiceRef.current.close();
+                webRTCServiceRef.current = null;
+            }
+
+            webRTCServiceRef.current = new WebRTCService();
+            setupWebRTCListeners();
+            
+            if (localStream) {
+                webRTCServiceRef.current.setLocalStream(localStream);
+            }
+
+            console.log('Setting remote description...');
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
+            console.log('Remote description set successfully');
+
             const answer = await webRTCServiceRef.current.createAnswer();
+            console.log('Answer created, sending...');
+            
             sendSignal(meetingId!, {
                 type: 'ANSWER',
                 payload: answer,
                 targetUserId: message.userId
             });
+            
+            // Process any pending ICE candidates
+            if (pendingIceCandidatesRef.current.length > 0) {
+                console.log('Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
+                for (const candidate of pendingIceCandidatesRef.current) {
+                    try {
+                        await webRTCServiceRef.current.addIceCandidate(candidate);
+                        console.log('✅ Pending ICE candidate added');
+                    } catch (e) {
+                        console.error('Error adding pending ICE candidate:', e);
+                    }
+                }
+                pendingIceCandidatesRef.current = [];
+            }
+            
             toast.success('Connected to peer!');
         } catch (error) {
             console.error('Error handling offer:', error);
@@ -160,7 +176,21 @@ const MeetingPage: React.FC = () => {
 
         try {
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
+            console.log('Remote description set for answer');
             toast.success('Call connected!');
+            
+            if (pendingIceCandidatesRef.current.length > 0) {
+                console.log('Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
+                for (const candidate of pendingIceCandidatesRef.current) {
+                    try {
+                        await webRTCServiceRef.current.addIceCandidate(candidate);
+                        console.log('✅ Pending ICE candidate added');
+                    } catch (e) {
+                        console.error('Error adding pending ICE candidate:', e);
+                    }
+                }
+                pendingIceCandidatesRef.current = [];
+            }
         } catch (error) {
             console.error('Error handling answer:', error);
             toast.error('Failed to connect call');
@@ -175,7 +205,14 @@ const MeetingPage: React.FC = () => {
         }
 
         try {
-            await webRTCServiceRef.current.addIceCandidate(message.payload);
+            const pc = webRTCServiceRef.current.getPeerConnection();
+            if (pc && pc.remoteDescription) {
+                await webRTCServiceRef.current.addIceCandidate(message.payload);
+                console.log('✅ ICE candidate added successfully');
+            } else {
+                console.log('⏳ Remote description not yet set, queuing ICE candidate');
+                pendingIceCandidatesRef.current.push(message.payload);
+            }
         } catch (error) {
             console.error('Error adding ICE candidate:', error);
         }
@@ -483,7 +520,6 @@ const MeetingPage: React.FC = () => {
                             >
                                 📋 Copy Link
                             </button>
-                            {/* ✅ Only show Start Call if not initiator and not in progress */}
                             {hasJoined && !isCallInProgress && !isInitiator && (
                                 <button
                                     onClick={handleStartCall}

@@ -60,7 +60,6 @@ export class WebRTCService {
             console.log('🎥 ICE connection state changed:', state);
         };
 
-        // Add negotiation needed handler
         this.peerConnection.onnegotiationneeded = () => {
             console.log('🎥 Negotiation needed');
         };
@@ -73,11 +72,9 @@ export class WebRTCService {
             return;
         }
 
-        // Remove existing senders first to avoid "track already set" error
         const senders = this.peerConnection.getSenders();
         console.log('🎥 Existing senders:', senders.length);
         
-        // Remove all existing senders
         senders.forEach(sender => {
             try {
                 this.peerConnection?.removeTrack(sender);
@@ -87,7 +84,6 @@ export class WebRTCService {
             }
         });
 
-        // Add all tracks from the local stream
         stream.getTracks().forEach(track => {
             try {
                 console.log('🎥 Adding track to peer connection:', track.kind);
@@ -121,7 +117,7 @@ export class WebRTCService {
                 offerToReceiveVideo: true,
             });
             await this.peerConnection.setLocalDescription(offer);
-            console.log('🎥 Offer created:', offer);
+            console.log('🎥 Offer created');
             return offer;
         } catch (error) {
             console.error('🎥 Failed to create offer:', error);
@@ -140,7 +136,7 @@ export class WebRTCService {
                 offerToReceiveVideo: true,
             });
             await this.peerConnection.setLocalDescription(answer);
-            console.log('🎥 Answer created:', answer);
+            console.log('🎥 Answer created');
             return answer;
         } catch (error) {
             console.error('🎥 Failed to create answer:', error);
@@ -174,6 +170,11 @@ export class WebRTCService {
             console.error('🎥 Failed to add ICE candidate:', error);
             throw error;
         }
+    }
+
+    // ✅ ADD THIS METHOD
+    public getPeerConnection(): RTCPeerConnection | null {
+        return this.peerConnection;
     }
 
     public getRemoteStream(): MediaStream | null {
