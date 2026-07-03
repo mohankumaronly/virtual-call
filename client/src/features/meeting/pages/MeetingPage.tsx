@@ -38,6 +38,7 @@ const MeetingPage: React.FC = () => {
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const isProcessingOfferRef = useRef<boolean>(false);
     const pendingIceCandidatesRef = useRef<any[]>([]);
+    const isCallInitiatedRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!meetingId) {
@@ -73,8 +74,10 @@ const MeetingPage: React.FC = () => {
         if (message.type === 'USER_JOINED') {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
-            if (meeting?.createdBy === user?.id && hasJoined && !isCallInProgress && !isInitiator) {
+            // ✅ ONLY the creator initiates the call
+            if (meeting?.createdBy === user?.id && hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current) {
                 console.log('📞 Creator initiating call with new participant');
+                isCallInitiatedRef.current = true;
                 setIsInitiator(true);
                 setTimeout(() => {
                     initiateCallWithParticipant(message.userId);
@@ -85,6 +88,7 @@ const MeetingPage: React.FC = () => {
             fetchParticipants();
             setIsInitiator(false);
             setIsCallInProgress(false);
+            isCallInitiatedRef.current = false;
         } else if (message.type === 'OFFER') {
             console.log('📩 Received OFFER from:', message.username);
             handleOffer(message);
@@ -144,7 +148,6 @@ const MeetingPage: React.FC = () => {
                 targetUserId: message.userId
             });
             
-            // Process any pending ICE candidates
             if (pendingIceCandidatesRef.current.length > 0) {
                 console.log('Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
                 for (const candidate of pendingIceCandidatesRef.current) {
@@ -243,6 +246,7 @@ const MeetingPage: React.FC = () => {
                 setIsCallActive(false);
                 setIsCallInProgress(false);
                 setIsInitiator(false);
+                isCallInitiatedRef.current = false;
                 toast.error('Call disconnected');
             }
         });
@@ -257,11 +261,12 @@ const MeetingPage: React.FC = () => {
     };
 
     const initiateCallWithParticipant = async (targetUserId: number) => {
-        if (isCallInProgress) {
+        if (isCallInProgress || isCallInitiatedRef.current) {
             console.log('Call already in progress');
             return;
         }
 
+        isCallInitiatedRef.current = true;
         setIsCallInProgress(true);
 
         if (!webRTCServiceRef.current) {
@@ -287,6 +292,7 @@ const MeetingPage: React.FC = () => {
             toast.error('Failed to initiate call');
             setIsCallInProgress(false);
             setIsInitiator(false);
+            isCallInitiatedRef.current = false;
         }
     };
 
@@ -401,7 +407,7 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
-        if (isInitiator || isCallInProgress) {
+        if (isInitiator || isCallInProgress || isCallInitiatedRef.current) {
             toast('Call already in progress', { icon: 'ℹ️' });
             return;
         }
@@ -520,7 +526,7 @@ const MeetingPage: React.FC = () => {
                             >
                                 📋 Copy Link
                             </button>
-                            {hasJoined && !isCallInProgress && !isInitiator && (
+                            {hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current && (
                                 <button
                                     onClick={handleStartCall}
                                     disabled={participants.length < 2}
