@@ -28,6 +28,8 @@ const MeetingPage: React.FC = () => {
     const [peerConnectionState, setPeerConnectionState] = useState<string>('disconnected');
     const [isCallActive, setIsCallActive] = useState(false);
     const [isCallInProgress, setIsCallInProgress] = useState(false);
+    // ✅ ADD THIS - Tracks who initiated the call
+    const [isInitiator, setIsInitiator] = useState(false);
 
     const { user } = useAuth();
     const { isConnected, joinMeeting, leaveMeeting, subscribeToMeeting, unsubscribeFromMeeting, sendSignal } = useWebSocket();
@@ -35,6 +37,8 @@ const MeetingPage: React.FC = () => {
 
     const webRTCServiceRef = useRef<WebRTCService | null>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
+    // ✅ ADD THIS - Prevents duplicate offer processing
+    const isProcessingOfferRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!meetingId) {
@@ -70,9 +74,10 @@ const MeetingPage: React.FC = () => {
         if (message.type === 'USER_JOINED') {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
-            // Auto-start call when second user joins (if creator)
-            if (meeting?.createdBy === user?.id && hasJoined && !isCallInProgress) {
-                console.log('📞 Auto-starting call with new participant');
+            // ✅ Only creator initiates call when someone joins
+            if (meeting?.createdBy === user?.id && hasJoined && !isCallInProgress && !isInitiator) {
+                console.log('📞 Creator initiating call with new participant');
+                setIsInitiator(true);
                 setTimeout(() => {
                     initiateCallWithParticipant(message.userId);
                 }, 1500);
@@ -80,6 +85,9 @@ const MeetingPage: React.FC = () => {
         } else if (message.type === 'USER_LEFT') {
             toast(`${message.username} left the meeting`, { icon: '👋' });
             fetchParticipants();
+            // ✅ Reset initiator status when someone leaves
+            setIsInitiator(false);
+            setIsCallInProgress(false);
         } else if (message.type === 'OFFER') {
             console.log('📩 Received OFFER from:', message.username);
             handleOffer(message);
@@ -90,12 +98,10 @@ const MeetingPage: React.FC = () => {
             console.log('📩 Received ICE_CANDIDATE from:', message.username);
             handleIceCandidate(message);
         } else if (message.type === 'SIGNAL') {
-            // Handle generic signal messages (contains payload with type)
             const payload = message.payload;
             if (payload && payload.type) {
                 console.log('📩 Received SIGNAL with type:', payload.type);
                 if (payload.type === 'OFFER') {
-                    // Convert to OFFER message
                     handleOffer({ ...message, payload: payload.payload || payload });
                 } else if (payload.type === 'ANSWER') {
                     handleAnswer({ ...message, payload: payload.payload || payload });
@@ -107,14 +113,25 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleOffer = async (message: any) => {
-        console.log('Received offer from:', message.username);
+        // ✅ Prevent duplicate offer processing
+        if (isProcessingOfferRef.current) {
+            console.log('Already processing an offer, ignoring...');
+            return;
+        }
 
-        if (!webRTCServiceRef.current) {
-            webRTCServiceRef.current = new WebRTCService();
-            setupWebRTCListeners();
-            if (localStream) {
-                webRTCServiceRef.current.setLocalStream(localStream);
-            }
+        console.log('Received offer from:', message.username);
+        isProcessingOfferRef.current = true;
+
+        // ✅ If we already have a peer connection, close it and create a new one
+        if (webRTCServiceRef.current) {
+            webRTCServiceRef.current.close();
+            webRTCServiceRef.current = null;
+        }
+
+        webRTCServiceRef.current = new WebRTCService();
+        setupWebRTCListeners();
+        if (localStream) {
+            webRTCServiceRef.current.setLocalStream(localStream);
         }
 
         try {
@@ -129,12 +146,17 @@ const MeetingPage: React.FC = () => {
         } catch (error) {
             console.error('Error handling offer:', error);
             toast.error('Failed to connect to peer');
+        } finally {
+            isProcessingOfferRef.current = false;
         }
     };
 
     const handleAnswer = async (message: any) => {
         console.log('Received answer from:', message.username);
-        if (!webRTCServiceRef.current) return;
+        if (!webRTCServiceRef.current) {
+            console.warn('No WebRTC service for answer');
+            return;
+        }
 
         try {
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
@@ -147,7 +169,10 @@ const MeetingPage: React.FC = () => {
 
     const handleIceCandidate = async (message: any) => {
         console.log('Received ICE candidate from:', message.username);
-        if (!webRTCServiceRef.current) return;
+        if (!webRTCServiceRef.current) {
+            console.warn('No WebRTC service for ICE candidate');
+            return;
+        }
 
         try {
             await webRTCServiceRef.current.addIceCandidate(message.payload);
@@ -180,6 +205,7 @@ const MeetingPage: React.FC = () => {
             } else if (state === 'disconnected' || state === 'failed') {
                 setIsCallActive(false);
                 setIsCallInProgress(false);
+                setIsInitiator(false);
                 toast.error('Call disconnected');
             }
         });
@@ -223,6 +249,7 @@ const MeetingPage: React.FC = () => {
             console.error('Error initiating call:', error);
             toast.error('Failed to initiate call');
             setIsCallInProgress(false);
+            setIsInitiator(false);
         }
     };
 
@@ -337,8 +364,14 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
+        if (isInitiator || isCallInProgress) {
+            toast('Call already in progress', { icon: 'ℹ️' });
+            return;
+        }
+
         const otherParticipant = participants.find(p => p.userId !== user?.id);
         if (otherParticipant) {
+            setIsInitiator(true);
             await initiateCallWithParticipant(otherParticipant.userId);
         }
     };
@@ -450,7 +483,8 @@ const MeetingPage: React.FC = () => {
                             >
                                 📋 Copy Link
                             </button>
-                            {hasJoined && !isCallInProgress && (
+                            {/* ✅ Only show Start Call if not initiator and not in progress */}
+                            {hasJoined && !isCallInProgress && !isInitiator && (
                                 <button
                                     onClick={handleStartCall}
                                     disabled={participants.length < 2}
