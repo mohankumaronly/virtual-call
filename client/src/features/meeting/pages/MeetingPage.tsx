@@ -40,7 +40,7 @@ const MeetingPage: React.FC = () => {
     const isCreatorRef = useRef<boolean>(false);
     const hasReceivedOfferRef = useRef<boolean>(false);
     const hasJoinedRef = useRef<boolean>(false);
-    const hasInitiatedCallRef = useRef<boolean>(false); // ✅ New ref to track if call was initiated
+    const hasInitiatedCallRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!meetingId) {
@@ -83,22 +83,16 @@ const MeetingPage: React.FC = () => {
             console.log('🔍 isCallInitiatedRef.current:', isCallInitiatedRef.current);
             console.log('🔍 hasInitiatedCallRef.current:', hasInitiatedCallRef.current);
             
-            // ✅ Only initiate if:
-            // 1. User is the creator
-            // 2. User has joined the meeting
-            // 3. Call is not already in progress
-            // 4. We haven't already initiated a call
-            // 5. The joining user is NOT the creator themselves
             const isJoiningUserCreator = message.userId === user?.id;
             console.log('🔍 isJoiningUserCreator:', isJoiningUserCreator);
             
+            // ✅ Only initiate if all conditions are met
             if (isCreatorRef.current && hasJoinedRef.current && !isCallInProgress && !hasInitiatedCallRef.current && !isJoiningUserCreator) {
                 console.log('📞 Creator initiating call with new participant');
+                // ✅ Set the flag BEFORE calling to prevent duplicates
                 hasInitiatedCallRef.current = true;
                 isCallInitiatedRef.current = true;
-                setTimeout(() => {
-                    initiateCallWithParticipant(message.userId);
-                }, 1500);
+                initiateCallWithParticipant(message.userId);
             }
         } else if (message.type === 'USER_LEFT') {
             toast(`${message.username} left the meeting`, { icon: '👋' });
@@ -294,7 +288,8 @@ const MeetingPage: React.FC = () => {
         console.log('📞 isCallInitiatedRef.current:', isCallInitiatedRef.current);
         console.log('📞 isCreatorRef.current:', isCreatorRef.current);
         
-        if (isCallInProgress || isCallInitiatedRef.current) {
+        // ✅ Check if call is already in progress
+        if (isCallInProgress) {
             console.log('Call already in progress');
             return;
         }
@@ -304,6 +299,7 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
+        // ✅ Set flags
         isCallInitiatedRef.current = true;
         setIsCallInProgress(true);
 
@@ -475,6 +471,7 @@ const MeetingPage: React.FC = () => {
         const otherParticipant = participants.find(p => p.userId !== user?.id);
         if (otherParticipant) {
             console.log('📞 Starting call with:', otherParticipant.name);
+            hasInitiatedCallRef.current = true;
             await initiateCallWithParticipant(otherParticipant.userId);
         }
     };
