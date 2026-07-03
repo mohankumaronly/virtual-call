@@ -28,7 +28,6 @@ const MeetingPage: React.FC = () => {
     const [peerConnectionState, setPeerConnectionState] = useState<string>('disconnected');
     const [isCallActive, setIsCallActive] = useState(false);
     const [isCallInProgress, setIsCallInProgress] = useState(false);
-    const [isInitiator, setIsInitiator] = useState(false);
 
     const { user } = useAuth();
     const { isConnected, joinMeeting, leaveMeeting, subscribeToMeeting, unsubscribeFromMeeting, sendSignal } = useWebSocket();
@@ -39,6 +38,8 @@ const MeetingPage: React.FC = () => {
     const isProcessingOfferRef = useRef<boolean>(false);
     const pendingIceCandidatesRef = useRef<any[]>([]);
     const isCallInitiatedRef = useRef<boolean>(false);
+    const isCreatorRef = useRef<boolean>(false);
+    const hasReceivedOfferRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!meetingId) {
@@ -76,23 +77,9 @@ const MeetingPage: React.FC = () => {
             fetchParticipants();
             
             // ✅ ONLY the creator initiates the call
-            const isCreator = meeting?.createdBy === user?.id;
-            const canInitiate = isCreator && hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current;
-            
-            console.log('🔍 Call initiation check:', { 
-                isCreator, 
-                hasJoined, 
-                isCallInProgress, 
-                isInitiator, 
-                isCallInitiatedRef: isCallInitiatedRef.current,
-                userId: user?.id,
-                createdBy: meeting?.createdBy
-            });
-            
-            if (canInitiate) {
+            if (isCreatorRef.current && hasJoined && !isCallInProgress && !isCallInitiatedRef.current) {
                 console.log('📞 Creator initiating call with new participant');
                 isCallInitiatedRef.current = true;
-                setIsInitiator(true);
                 setTimeout(() => {
                     initiateCallWithParticipant(message.userId);
                 }, 1500);
@@ -100,11 +87,11 @@ const MeetingPage: React.FC = () => {
         } else if (message.type === 'USER_LEFT') {
             toast(`${message.username} left the meeting`, { icon: '👋' });
             fetchParticipants();
-            setIsInitiator(false);
             setIsCallInProgress(false);
             isCallInitiatedRef.current = false;
         } else if (message.type === 'OFFER') {
             console.log('📩 Received OFFER from:', message.username);
+            hasReceivedOfferRef.current = true;
             handleOffer(message);
         } else if (message.type === 'ANSWER') {
             console.log('📩 Received ANSWER from:', message.username);
@@ -118,6 +105,7 @@ const MeetingPage: React.FC = () => {
 
             if (payload && payload.type) {
                 if (payload.type === 'OFFER') {
+                    hasReceivedOfferRef.current = true;
                     handleOffer({ ...message, payload: payload.payload || payload });
                 } else if (payload.type === 'ANSWER') {
                     handleAnswer({ ...message, payload: payload.payload || payload });
@@ -260,7 +248,6 @@ const MeetingPage: React.FC = () => {
             } else if (state === 'disconnected' || state === 'failed') {
                 setIsCallActive(false);
                 setIsCallInProgress(false);
-                setIsInitiator(false);
                 isCallInitiatedRef.current = false;
                 toast.error('Call disconnected');
             }
@@ -276,8 +263,15 @@ const MeetingPage: React.FC = () => {
     };
 
     const initiateCallWithParticipant = async (targetUserId: number) => {
+        // ✅ Prevent multiple calls
         if (isCallInProgress || isCallInitiatedRef.current) {
             console.log('Call already in progress');
+            return;
+        }
+
+        // ✅ Only creator can initiate
+        if (!isCreatorRef.current) {
+            console.log('Only creator can initiate call');
             return;
         }
 
@@ -306,7 +300,6 @@ const MeetingPage: React.FC = () => {
             console.error('Error initiating call:', error);
             toast.error('Failed to initiate call');
             setIsCallInProgress(false);
-            setIsInitiator(false);
             isCallInitiatedRef.current = false;
         }
     };
@@ -317,6 +310,11 @@ const MeetingPage: React.FC = () => {
             const response = await api.get<ApiResponse<MeetingResponse>>(`/api/meetings/${meetingId}`);
             if (response.data.success && response.data.data) {
                 setMeeting(response.data.data);
+                // ✅ Set creator flag
+                isCreatorRef.current = response.data.data.createdBy === user?.id;
+                console.log('👤 Is creator?', isCreatorRef.current);
+                console.log('👤 Meeting created by:', response.data.data.createdBy);
+                console.log('👤 Current user:', user?.id);
             } else {
                 toast.error(response.data.message || 'Meeting not found');
                 navigate('/dashboard');
@@ -417,25 +415,31 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleStartCall = async () => {
+        console.log('🔵 Start Call button clicked');
+        console.log('👤 isCreatorRef.current:', isCreatorRef.current);
+        console.log('👤 user?.id:', user?.id);
+        console.log('👤 meeting?.createdBy:', meeting?.createdBy);
+        console.log('📊 participants.length:', participants.length);
+        
         if (participants.length < 2) {
             toast.error('Need at least 2 participants to start a call');
             return;
         }
 
-        // ✅ Only creator can start the call
-        if (meeting?.createdBy !== user?.id) {
+        if (!isCreatorRef.current) {
             toast('Only the meeting creator can start the call', { icon: 'ℹ️' });
+            console.log('❌ User is not the creator');
             return;
         }
 
-        if (isInitiator || isCallInProgress || isCallInitiatedRef.current) {
+        if (isCallInProgress || isCallInitiatedRef.current) {
             toast('Call already in progress', { icon: 'ℹ️' });
             return;
         }
 
         const otherParticipant = participants.find(p => p.userId !== user?.id);
         if (otherParticipant) {
-            setIsInitiator(true);
+            console.log('📞 Initiating call with:', otherParticipant.name);
             await initiateCallWithParticipant(otherParticipant.userId);
         }
     };
@@ -547,8 +551,7 @@ const MeetingPage: React.FC = () => {
                             >
                                 📋 Copy Link
                             </button>
-                            {/* ✅ Only show Start Call for creator */}
-                            {hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current && meeting?.createdBy === user?.id && (
+                            {hasJoined && !isCallInProgress && !isCallInitiatedRef.current && isCreatorRef.current && (
                                 <button
                                     onClick={handleStartCall}
                                     disabled={participants.length < 2}
@@ -562,7 +565,7 @@ const MeetingPage: React.FC = () => {
                                     ⏳ Connecting...
                                 </span>
                             )}
-                            {meeting.createdBy === user?.id && (
+                            {isCreatorRef.current && (
                                 <button
                                     onClick={handleEndMeeting}
                                     className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
@@ -602,6 +605,9 @@ const MeetingPage: React.FC = () => {
                                         {p.userId === user?.id && (
                                             <span className="ml-auto text-xs text-blue-600 font-medium">(You)</span>
                                         )}
+                                        {p.userId === meeting.createdBy && (
+                                            <span className="text-xs text-green-600 font-medium">👑 Creator</span>
+                                        )}
                                     </li>
                                 ))}
                             </ul>
@@ -622,6 +628,7 @@ const MeetingPage: React.FC = () => {
                             <p>Participants: <span className="font-bold">{participants.length}</span></p>
                             <p>Call: <span className="font-bold">{isCallActive ? '📞 Active' : '⏸️ Inactive'}</span></p>
                             <p>Connection: <span className="font-bold">{peerConnectionState}</span></p>
+                            <p>Role: <span className="font-bold">{isCreatorRef.current ? '👑 Creator' : '👤 Participant'}</span></p>
                         </div>
                     </div>
                 </div>
