@@ -74,7 +74,6 @@ const MeetingPage: React.FC = () => {
         if (message.type === 'USER_JOINED') {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
-            // ✅ ONLY the creator initiates the call
             if (meeting?.createdBy === user?.id && hasJoined && !isCallInProgress && !isInitiator && !isCallInitiatedRef.current) {
                 console.log('📞 Creator initiating call with new participant');
                 isCallInitiatedRef.current = true;
@@ -99,9 +98,11 @@ const MeetingPage: React.FC = () => {
             console.log('📩 Received ICE_CANDIDATE from:', message.username);
             handleIceCandidate(message);
         } else if (message.type === 'SIGNAL') {
+            // ✅ Handle SIGNAL messages - extract the actual payload
             const payload = message.payload;
+            console.log('📩 Received SIGNAL, payload type:', payload?.type);
+
             if (payload && payload.type) {
-                console.log('📩 Received SIGNAL with type:', payload.type);
                 if (payload.type === 'OFFER') {
                     handleOffer({ ...message, payload: payload.payload || payload });
                 } else if (payload.type === 'ANSWER') {
@@ -130,7 +131,7 @@ const MeetingPage: React.FC = () => {
 
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
-            
+
             if (localStream) {
                 webRTCServiceRef.current.setLocalStream(localStream);
             }
@@ -141,13 +142,13 @@ const MeetingPage: React.FC = () => {
 
             const answer = await webRTCServiceRef.current.createAnswer();
             console.log('Answer created, sending...');
-            
+
             sendSignal(meetingId!, {
                 type: 'ANSWER',
                 payload: answer,
                 targetUserId: message.userId
             });
-            
+
             if (pendingIceCandidatesRef.current.length > 0) {
                 console.log('Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
                 for (const candidate of pendingIceCandidatesRef.current) {
@@ -160,7 +161,7 @@ const MeetingPage: React.FC = () => {
                 }
                 pendingIceCandidatesRef.current = [];
             }
-            
+
             toast.success('Connected to peer!');
         } catch (error) {
             console.error('Error handling offer:', error);
@@ -181,7 +182,7 @@ const MeetingPage: React.FC = () => {
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
             console.log('Remote description set for answer');
             toast.success('Call connected!');
-            
+
             if (pendingIceCandidatesRef.current.length > 0) {
                 console.log('Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
                 for (const candidate of pendingIceCandidatesRef.current) {
