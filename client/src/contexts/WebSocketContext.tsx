@@ -4,6 +4,26 @@ import { Client } from '@stomp/stompjs';
 import { useAuth } from './AuthContext';
 import toast from 'react-hot-toast';
 
+// ============================================
+// ✅ Use environment variable for WebSocket URL
+// ============================================
+const getWebSocketUrl = () => {
+    // Use VITE_WS_URL if set
+    if (import.meta.env.VITE_WS_URL) {
+        return import.meta.env.VITE_WS_URL;
+    }
+    // Fallback: use VITE_API_URL and replace http with ws
+    if (import.meta.env.VITE_API_URL) {
+        const apiUrl = import.meta.env.VITE_API_URL;
+        // Replace http:// with ws:// and https:// with wss://
+        return apiUrl.replace(/^http/, 'ws') + '/ws';
+    }
+    // Default: localhost
+    return 'ws://localhost:8080/ws';
+};
+
+const WS_URL = getWebSocketUrl();
+
 interface WebSocketContextType {
     isConnected: boolean;
     joinMeeting: (meetingId: string) => void;
@@ -36,28 +56,29 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     useEffect(() => {
         if (!user) return;
 
-        // Use native WebSocket directly without SockJS
+        console.log('🔌 Connecting to WebSocket:', WS_URL);
+
+        // Use native WebSocket
         const client = new Client({
-            brokerURL: 'ws://localhost:8080/ws',
+            brokerURL: WS_URL,
             debug: (str) => {
                 console.log('WebSocket debug:', str);
             },
             onConnect: () => {
                 setIsConnected(true);
                 toast.success('Connected to real-time server');
-                console.log('WebSocket connected');
+                console.log('✅ WebSocket connected to:', WS_URL);
             },
             onDisconnect: () => {
                 setIsConnected(false);
                 toast.error('Disconnected from real-time server');
-                console.log('WebSocket disconnected');
+                console.log('❌ WebSocket disconnected');
             },
             onStompError: (frame) => {
                 console.error('Broker reported error: ' + frame.headers['message']);
                 console.error('Additional details: ' + frame.body);
                 setIsConnected(false);
             },
-            // Reconnect settings
             reconnectDelay: 5000,
             heartbeatIncoming: 4000,
             heartbeatOutgoing: 4000,
@@ -75,7 +96,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }, [user]);
 
     const joinMeeting = (meetingId: string) => {
-        if (!clientRef.current || !isConnected) return;
+        if (!clientRef.current || !isConnected) {
+            console.warn('Cannot join meeting: WebSocket not connected');
+            return;
+        }
         
         const message = {
             type: 'USER_JOINED',
@@ -90,6 +114,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             destination: `/app/meeting/${meetingId}/join`,
             body: JSON.stringify(message)
         });
+        console.log('📤 Sent JOIN message:', message);
     };
 
     const leaveMeeting = (meetingId: string) => {
@@ -110,7 +135,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     };
 
     const sendSignal = (meetingId: string, payload: any) => {
-        if (!clientRef.current || !isConnected) return;
+        if (!clientRef.current || !isConnected) {
+            console.warn('Cannot send signal: WebSocket not connected');
+            return;
+        }
         
         const message = {
             type: 'SIGNAL',
@@ -125,10 +153,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             destination: `/app/meeting/${meetingId}/signal`,
             body: JSON.stringify(message)
         });
+        console.log('📤 Sent SIGNAL:', message.type);
     };
 
     const subscribeToMeeting = (meetingId: string, callback: (message: any) => void) => {
-        if (!clientRef.current || !isConnected) return;
+        if (!clientRef.current || !isConnected) {
+            console.warn('Cannot subscribe: WebSocket not connected');
+            return;
+        }
         
         // Unsubscribe from existing subscription for this meeting
         if (subscriptionsRef.current.has(meetingId)) {
@@ -140,6 +172,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             (message) => {
                 try {
                     const data = JSON.parse(message.body);
+                    console.log('📩 Received message:', data.type, data.username);
                     callback(data);
                 } catch (e) {
                     console.error('Failed to parse message:', e);
@@ -148,12 +181,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         );
         
         subscriptionsRef.current.set(meetingId, subscription);
+        console.log('📡 Subscribed to meeting:', meetingId);
     };
 
     const unsubscribeFromMeeting = (meetingId: string) => {
         if (subscriptionsRef.current.has(meetingId)) {
             subscriptionsRef.current.get(meetingId).unsubscribe();
             subscriptionsRef.current.delete(meetingId);
+            console.log('📡 Unsubscribed from meeting:', meetingId);
         }
     };
 
