@@ -29,10 +29,8 @@ public class MeetingService {
 
     @Transactional
     public MeetingResponse createMeeting(Long userId, String title) {
-        // Generate UUID for meeting
         String meetingId = UUID.randomUUID().toString();
 
-        // Create meeting
         Meeting meeting = Meeting.builder()
                 .meetingId(meetingId)
                 .title(title != null ? title : "Meeting " + meetingId.substring(0, 8))
@@ -58,7 +56,6 @@ public class MeetingService {
     public MeetingResponse getMeetingByMeetingId(String meetingId) {
         Meeting meeting = meetingRepository.findByMeetingId(meetingId)
                 .orElseThrow(() -> new RuntimeException("Meeting not found with ID: " + meetingId));
-
         return toMeetingResponse(meeting);
     }
 
@@ -69,19 +66,30 @@ public class MeetingService {
 
     @Transactional
     public void joinMeeting(Long userId, String meetingId) {
+        log.info("Attempting to join meeting - userId: {}, meetingId: {}", userId, meetingId);
+
         Meeting meeting = getMeetingEntityByMeetingId(meetingId);
 
         // Check if meeting is active
         if (meeting.getStatus() != Meeting.MeetingStatus.ACTIVE) {
-            throw new RuntimeException("Meeting is not active");
+            log.error("Meeting is not active. Status: {}", meeting.getStatus());
+            throw new RuntimeException("Meeting is not active. Status: " + meeting.getStatus());
         }
 
         // Check if already joined
         if (meetingParticipantRepository.existsByMeetingIdAndUserId(meeting.getId(), userId)) {
-            throw new RuntimeException("User already joined this meeting");
+            log.info("User {} already joined meeting: {}, re-joining", userId, meetingId);
+            // Update joinedAt timestamp and clear leftAt (re-join)
+            meetingParticipantRepository.updateLeftAtByMeetingIdAndUserId(
+                    meeting.getId(),
+                    userId,
+                    null // Setting leftAt to null means they're active again
+            );
+            log.info("User {} re-joined successfully", userId);
+            return; // Successfully re-joined
         }
 
-        // Add participant
+        // Add new participant
         MeetingParticipant participant = MeetingParticipant.builder()
                 .meetingId(meeting.getId())
                 .userId(userId)
@@ -89,7 +97,7 @@ public class MeetingService {
                 .build();
         meetingParticipantRepository.save(participant);
 
-        log.info("User {} joined meeting: {}", userId, meetingId);
+        log.info("User {} successfully joined meeting: {}", userId, meetingId);
     }
 
     @Transactional
@@ -108,7 +116,7 @@ public class MeetingService {
     public List<MeetingResponse> getMeetingHistory(Long userId) {
         List<Meeting> meetings = meetingRepository.findByCreatedByOrderByCreatedAtDesc(userId);
         return meetings.stream()
-                .limit(20) // Last 20 meetings
+                .limit(20)
                 .map(this::toMeetingResponse)
                 .collect(Collectors.toList());
     }
@@ -119,6 +127,7 @@ public class MeetingService {
         List<MeetingParticipant> participants = meetingParticipantRepository.findByMeetingId(meeting.getId());
 
         return participants.stream()
+                .filter(p -> p.getLeftAt() == null) // Only show active participants
                 .map(participant -> {
                     User user = userRepository.findById(participant.getUserId())
                             .orElse(null);
@@ -144,11 +153,12 @@ public class MeetingService {
     }
 
     private MeetingResponse toMeetingResponse(Meeting meeting) {
-        // Get participant count
+        // Get active participant count (only those who haven't left)
         List<MeetingParticipant> participants = meetingParticipantRepository.findByMeetingId(meeting.getId());
-        int participantCount = participants.size();
+        int participantCount = (int) participants.stream()
+                .filter(p -> p.getLeftAt() == null)
+                .count();
 
-        // Get creator name
         String creatorName = "Unknown";
         User creator = userRepository.findById(meeting.getCreatedBy()).orElse(null);
         if (creator != null) {
