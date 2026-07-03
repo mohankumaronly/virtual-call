@@ -4,13 +4,12 @@ export interface WebRTCConfig {
 
 export class WebRTCService {
     private peerConnection: RTCPeerConnection | null = null;
-    private localStream: MediaStream | null = null;
     private remoteStream: MediaStream | null = null;
     private onRemoteStreamCallback: ((stream: MediaStream) => void) | null = null;
     private onConnectionStateChangeCallback: ((state: RTCPeerConnectionState) => void) | null = null;
     private onIceCandidateCallback: ((candidate: RTCIceCandidate) => void) | null = null;
 
-    constructor(config?: WebRTCConfig) {
+    constructor() {
         const defaultConfig: RTCConfiguration = {
             iceServers: [
                 {
@@ -64,7 +63,6 @@ export class WebRTCService {
     }
 
     public setLocalStream(stream: MediaStream): void {
-        this.localStream = stream;
         if (!this.peerConnection) return;
 
         // Add all tracks from the local stream
@@ -176,4 +174,4 @@ export class WebRTCService {
     public isConnecting(): boolean {
         return this.peerConnection?.connectionState === 'connecting';
     }
-}
+} 
