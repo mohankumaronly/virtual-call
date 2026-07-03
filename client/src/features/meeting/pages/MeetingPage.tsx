@@ -39,7 +39,8 @@ const MeetingPage: React.FC = () => {
     const isCallInitiatedRef = useRef<boolean>(false);
     const isCreatorRef = useRef<boolean>(false);
     const hasReceivedOfferRef = useRef<boolean>(false);
-    const hasJoinedRef = useRef<boolean>(false); // ✅ Use ref instead of state
+    const hasJoinedRef = useRef<boolean>(false);
+    const hasInitiatedCallRef = useRef<boolean>(false); // ✅ New ref to track if call was initiated
 
     useEffect(() => {
         if (!meetingId) {
@@ -76,15 +77,24 @@ const MeetingPage: React.FC = () => {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
             
-            // ✅ Use ref for hasJoined
             console.log('🔍 isCreatorRef.current:', isCreatorRef.current);
             console.log('🔍 hasJoinedRef.current:', hasJoinedRef.current);
             console.log('🔍 isCallInProgress:', isCallInProgress);
             console.log('🔍 isCallInitiatedRef.current:', isCallInitiatedRef.current);
+            console.log('🔍 hasInitiatedCallRef.current:', hasInitiatedCallRef.current);
             
-            // ✅ Only creator initiates and only if they have already joined
-            if (isCreatorRef.current && hasJoinedRef.current && !isCallInProgress && !isCallInitiatedRef.current) {
+            // ✅ Only initiate if:
+            // 1. User is the creator
+            // 2. User has joined the meeting
+            // 3. Call is not already in progress
+            // 4. We haven't already initiated a call
+            // 5. The joining user is NOT the creator themselves
+            const isJoiningUserCreator = message.userId === user?.id;
+            console.log('🔍 isJoiningUserCreator:', isJoiningUserCreator);
+            
+            if (isCreatorRef.current && hasJoinedRef.current && !isCallInProgress && !hasInitiatedCallRef.current && !isJoiningUserCreator) {
                 console.log('📞 Creator initiating call with new participant');
+                hasInitiatedCallRef.current = true;
                 isCallInitiatedRef.current = true;
                 setTimeout(() => {
                     initiateCallWithParticipant(message.userId);
@@ -95,6 +105,7 @@ const MeetingPage: React.FC = () => {
             fetchParticipants();
             setIsCallInProgress(false);
             isCallInitiatedRef.current = false;
+            hasInitiatedCallRef.current = false;
         } else if (message.type === 'OFFER') {
             console.log('📩 Received OFFER from:', message.username);
             hasReceivedOfferRef.current = true;
@@ -263,6 +274,7 @@ const MeetingPage: React.FC = () => {
                 setIsCallActive(false);
                 setIsCallInProgress(false);
                 isCallInitiatedRef.current = false;
+                hasInitiatedCallRef.current = false;
                 toast.error('Call disconnected');
             }
         });
@@ -320,6 +332,7 @@ const MeetingPage: React.FC = () => {
             toast.error('Failed to initiate call');
             setIsCallInProgress(false);
             isCallInitiatedRef.current = false;
+            hasInitiatedCallRef.current = false;
         }
     };
 
@@ -373,7 +386,7 @@ const MeetingPage: React.FC = () => {
             const response = await api.post<ApiResponse>(`/api/meetings/${meetingId}/join`);
             if (response.data.success) {
                 toast.success(response.data.message);
-                hasJoinedRef.current = true; // ✅ Set ref
+                hasJoinedRef.current = true;
                 await fetchMeeting();
                 await fetchParticipants();
 
