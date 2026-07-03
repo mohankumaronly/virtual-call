@@ -13,14 +13,15 @@ import java.util.Map;
 @Builder
 public class WebSocketMessage {
 
-    private String type; // USER_JOINED, USER_LEFT, SIGNAL, OFFER, ANSWER, ICE_CANDIDATE
+    private String type; // USER_JOINED, USER_LEFT, OFFER, ANSWER, ICE_CANDIDATE
     private String meetingId;
     private Long userId;
     private String username;
     private String name;
-    private Object payload; // For WebRTC signaling data
+    private Object payload;
     private Long timestamp;
     private Map<String, Object> data;
+    private Long targetUserId; // Optional: for targeted messages
 
     public static WebSocketMessage userJoined(Long userId, String username, String name, String meetingId) {
         return WebSocketMessage.builder()

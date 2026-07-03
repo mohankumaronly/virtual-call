@@ -6,7 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
-import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
@@ -18,27 +17,30 @@ public class WebSocketController {
     private final SimpMessagingTemplate messagingTemplate;
 
     @MessageMapping("/meeting/{meetingId}/join")
-    @SendTo("/topic/meeting/{meetingId}")
-    public WebSocketMessage userJoined(
+    public void userJoined(
             @DestinationVariable String meetingId,
             @Payload WebSocketMessage message
     ) {
-        log.info("User {} joined meeting: {}", message.getUsername(), meetingId);
+        log.info("👤 User {} joined meeting: {}", message.getUsername(), meetingId);
         message.setType("USER_JOINED");
         message.setMeetingId(meetingId);
-        return message;
+
+        // Broadcast to ALL subscribers of this meeting
+        messagingTemplate.convertAndSend("/topic/meeting/" + meetingId, message);
+        log.info("📤 Broadcast USER_JOINED to: /topic/meeting/{}", meetingId);
     }
 
     @MessageMapping("/meeting/{meetingId}/leave")
-    @SendTo("/topic/meeting/{meetingId}")
-    public WebSocketMessage userLeft(
+    public void userLeft(
             @DestinationVariable String meetingId,
             @Payload WebSocketMessage message
     ) {
-        log.info("User {} left meeting: {}", message.getUsername(), meetingId);
+        log.info("👤 User {} left meeting: {}", message.getUsername(), meetingId);
         message.setType("USER_LEFT");
         message.setMeetingId(meetingId);
-        return message;
+
+        messagingTemplate.convertAndSend("/topic/meeting/" + meetingId, message);
+        log.info("📤 Broadcast USER_LEFT to: /topic/meeting/{}", meetingId);
     }
 
     @MessageMapping("/meeting/{meetingId}/signal")
@@ -46,8 +48,10 @@ public class WebSocketController {
             @DestinationVariable String meetingId,
             @Payload WebSocketMessage message
     ) {
-        log.info("Signal message from {} in meeting: {}", message.getUsername(), meetingId);
-        // Forward to other participants in the room
-        messagingTemplate.convertAndSend("/topic/meeting/" + meetingId + "/signal", message);
+        log.info("📡 Signal from {} in meeting: {}", message.getUsername(), meetingId);
+        log.info("📡 Type: {}, Payload: {}", message.getType(), message.getPayload() != null ? "present" : "null");
+
+        messagingTemplate.convertAndSend("/topic/meeting/" + meetingId, message);
+        log.info("📤 Broadcast SIGNAL to: /topic/meeting/{}", meetingId);
     }
 }

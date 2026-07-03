@@ -100,7 +100,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             console.warn('Cannot join meeting: WebSocket not connected');
             return;
         }
-        
+
         const message = {
             type: 'USER_JOINED',
             meetingId: meetingId,
@@ -109,7 +109,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             name: user?.name,
             timestamp: Date.now()
         };
-        
+
         clientRef.current.publish({
             destination: `/app/meeting/${meetingId}/join`,
             body: JSON.stringify(message)
@@ -119,7 +119,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     const leaveMeeting = (meetingId: string) => {
         if (!clientRef.current || !isConnected) return;
-        
+
         const message = {
             type: 'USER_LEFT',
             meetingId: meetingId,
@@ -127,7 +127,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             username: user?.username,
             timestamp: Date.now()
         };
-        
+
         clientRef.current.publish({
             destination: `/app/meeting/${meetingId}/leave`,
             body: JSON.stringify(message)
@@ -139,7 +139,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             console.warn('Cannot send signal: WebSocket not connected');
             return;
         }
-        
+
         const message = {
             type: 'SIGNAL',
             meetingId: meetingId,
@@ -148,7 +148,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             payload: payload,
             timestamp: Date.now()
         };
-        
+
         clientRef.current.publish({
             destination: `/app/meeting/${meetingId}/signal`,
             body: JSON.stringify(message)
@@ -161,25 +161,27 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             console.warn('Cannot subscribe: WebSocket not connected');
             return;
         }
-        
-        // Unsubscribe from existing subscription for this meeting
+
         if (subscriptionsRef.current.has(meetingId)) {
             subscriptionsRef.current.get(meetingId).unsubscribe();
         }
-        
+
+        const destination = `/topic/meeting/${meetingId}`;
+        console.log('📡 Subscribing to:', destination);
+
         const subscription = clientRef.current.subscribe(
-            `/topic/meeting/${meetingId}`,
+            destination,
             (message) => {
                 try {
                     const data = JSON.parse(message.body);
-                    console.log('📩 Received message:', data.type, data.username);
+                    console.log('📩 Received message on', destination, ':', data.type, 'from', data.username);
                     callback(data);
                 } catch (e) {
                     console.error('Failed to parse message:', e);
                 }
             }
         );
-        
+
         subscriptionsRef.current.set(meetingId, subscription);
         console.log('📡 Subscribed to meeting:', meetingId);
     };

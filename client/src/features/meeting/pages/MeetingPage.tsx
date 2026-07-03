@@ -28,11 +28,11 @@ const MeetingPage: React.FC = () => {
     const [peerConnectionState, setPeerConnectionState] = useState<string>('disconnected');
     const [isCallActive, setIsCallActive] = useState(false);
     const [isCallInProgress, setIsCallInProgress] = useState(false);
-    
+
     const { user } = useAuth();
     const { isConnected, joinMeeting, leaveMeeting, subscribeToMeeting, unsubscribeFromMeeting, sendSignal } = useWebSocket();
     const navigate = useNavigate();
-    
+
     const webRTCServiceRef = useRef<WebRTCService | null>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -43,11 +43,11 @@ const MeetingPage: React.FC = () => {
         }
         fetchMeeting();
         fetchParticipants();
-        
+
         if (isConnected) {
             subscribeToMeeting(meetingId, handleWebSocketMessage);
         }
-        
+
         return () => {
             if (meetingId) {
                 unsubscribeFromMeeting(meetingId);
@@ -65,29 +65,50 @@ const MeetingPage: React.FC = () => {
     }, [meetingId, isConnected]);
 
     const handleWebSocketMessage = (message: any) => {
-        console.log('WebSocket message:', message);
-        
+        console.log('📩 WebSocket message received:', message.type, 'from:', message.username);
+
         if (message.type === 'USER_JOINED') {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
+            // Auto-start call when second user joins (if creator)
             if (meeting?.createdBy === user?.id && hasJoined && !isCallInProgress) {
-                initiateCallWithParticipant(message.userId);
+                console.log('📞 Auto-starting call with new participant');
+                setTimeout(() => {
+                    initiateCallWithParticipant(message.userId);
+                }, 1500);
             }
         } else if (message.type === 'USER_LEFT') {
             toast(`${message.username} left the meeting`, { icon: '👋' });
             fetchParticipants();
         } else if (message.type === 'OFFER') {
+            console.log('📩 Received OFFER from:', message.username);
             handleOffer(message);
         } else if (message.type === 'ANSWER') {
+            console.log('📩 Received ANSWER from:', message.username);
             handleAnswer(message);
         } else if (message.type === 'ICE_CANDIDATE') {
+            console.log('📩 Received ICE_CANDIDATE from:', message.username);
             handleIceCandidate(message);
+        } else if (message.type === 'SIGNAL') {
+            // Handle generic signal messages (contains payload with type)
+            const payload = message.payload;
+            if (payload && payload.type) {
+                console.log('📩 Received SIGNAL with type:', payload.type);
+                if (payload.type === 'OFFER') {
+                    // Convert to OFFER message
+                    handleOffer({ ...message, payload: payload.payload || payload });
+                } else if (payload.type === 'ANSWER') {
+                    handleAnswer({ ...message, payload: payload.payload || payload });
+                } else if (payload.type === 'ICE_CANDIDATE') {
+                    handleIceCandidate({ ...message, payload: payload.payload || payload });
+                }
+            }
         }
     };
 
     const handleOffer = async (message: any) => {
         console.log('Received offer from:', message.username);
-        
+
         if (!webRTCServiceRef.current) {
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
@@ -164,6 +185,7 @@ const MeetingPage: React.FC = () => {
         });
 
         webRTCServiceRef.current.onIceCandidate((candidate) => {
+            console.log('🧊 Sending ICE candidate');
             sendSignal(meetingId!, {
                 type: 'ICE_CANDIDATE',
                 payload: candidate,
@@ -176,9 +198,9 @@ const MeetingPage: React.FC = () => {
             console.log('Call already in progress');
             return;
         }
-        
+
         setIsCallInProgress(true);
-        
+
         if (!webRTCServiceRef.current) {
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
@@ -195,7 +217,7 @@ const MeetingPage: React.FC = () => {
                 payload: offer,
                 targetUserId: targetUserId
             });
-            
+
             toast('Calling participant...', { icon: '📞' });
         } catch (error) {
             console.error('Error initiating call:', error);
@@ -251,7 +273,7 @@ const MeetingPage: React.FC = () => {
                 setHasJoined(true);
                 await fetchMeeting();
                 await fetchParticipants();
-                
+
                 if (isConnected && user) {
                     joinMeeting(meetingId);
                 }
@@ -271,7 +293,7 @@ const MeetingPage: React.FC = () => {
         console.log('📷 handleStreamReady called');
         setLocalStream(stream);
         toast.success('Camera is ready!');
-        
+
         if (!webRTCServiceRef.current) {
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
@@ -335,7 +357,7 @@ const MeetingPage: React.FC = () => {
 
     return (
         <div className="max-w-6xl mx-auto p-4">
-            <button 
+            <button
                 onClick={() => navigate('/dashboard')}
                 className="mb-6 text-blue-600 hover:text-blue-800"
             >
@@ -358,7 +380,7 @@ const MeetingPage: React.FC = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                             <div>
                                 {showCamera ? (
-                                    <CameraPreview 
+                                    <CameraPreview
                                         onStreamReady={handleStreamReady}
                                         onError={handleStreamError}
                                     />
@@ -409,12 +431,11 @@ const MeetingPage: React.FC = () => {
                         <div className="space-y-3">
                             <p><strong>Meeting ID:</strong> <span className="font-mono text-sm">{meeting.meetingId}</span></p>
                             <p><strong>Title:</strong> {meeting.title}</p>
-                            <p><strong>Status:</strong> 
-                                <span className={`ml-2 px-2 py-1 rounded text-sm ${
-                                    meeting.status === 'ACTIVE' 
-                                        ? 'bg-green-100 text-green-700' 
-                                        : 'bg-red-100 text-red-700'
-                                }`}>
+                            <p><strong>Status:</strong>
+                                <span className={`ml-2 px-2 py-1 rounded text-sm ${meeting.status === 'ACTIVE'
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-red-100 text-red-700'
+                                    }`}>
                                     {meeting.status}
                                 </span>
                             </p>
@@ -423,14 +444,14 @@ const MeetingPage: React.FC = () => {
                         </div>
 
                         <div className="mt-6 flex flex-wrap gap-3">
-                            <button 
+                            <button
                                 onClick={handleCopyLink}
                                 className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
                             >
                                 📋 Copy Link
                             </button>
                             {hasJoined && !isCallInProgress && (
-                                <button 
+                                <button
                                     onClick={handleStartCall}
                                     disabled={participants.length < 2}
                                     className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
@@ -444,7 +465,7 @@ const MeetingPage: React.FC = () => {
                                 </span>
                             )}
                             {meeting.createdBy === user?.id && (
-                                <button 
+                                <button
                                     onClick={handleEndMeeting}
                                     className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                                 >
@@ -470,9 +491,8 @@ const MeetingPage: React.FC = () => {
                                 {participants.map((p) => (
                                     <li key={p.userId} className="flex items-center space-x-3">
                                         <div className="relative">
-                                            <span className={`w-2 h-2 rounded-full absolute -top-1 -right-1 ${
-                                                p.userId === user?.id ? 'bg-green-500' : 'bg-blue-500'
-                                            }`}></span>
+                                            <span className={`w-2 h-2 rounded-full absolute -top-1 -right-1 ${p.userId === user?.id ? 'bg-green-500' : 'bg-blue-500'
+                                                }`}></span>
                                             <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">
                                                 {p.name.charAt(0).toUpperCase()}
                                             </div>
