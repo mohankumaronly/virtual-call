@@ -33,31 +33,57 @@ const MeetingHistory: React.FC = () => {
     };
 
     if (isLoading) {
-        return <div>Loading meetings...</div>;
+        return (
+            <div className="flex justify-center items-center py-8">
+                <div className="text-gray-500">Loading meetings...</div>
+            </div>
+        );
     }
 
     if (meetings.length === 0) {
-        return <p>No meetings yet. Create your first meeting!</p>;
+        return (
+            <div className="text-center py-8">
+                <p className="text-gray-500">No meetings yet.</p>
+                <p className="text-sm text-gray-400 mt-1">Create your first meeting to get started!</p>
+            </div>
+        );
     }
 
     return (
-        <div>
-            <h3>Recent Meetings</h3>
-            <div>
-                {meetings.map((meeting) => (
-                    <div
-                        key={meeting.id}
-                        onClick={() => handleMeetingClick(meeting.meetingId)}
-                    >
-                        <div>
-                            <p>{meeting.title}</p>
-                            <p>Status: {meeting.status}</p>
-                            <p>Participants: {meeting.participantCount}</p>
-                            <p>Created: {new Date(meeting.createdAt).toLocaleDateString()}</p>
+        <div className="space-y-3">
+            {meetings.map((meeting) => (
+                <div
+                    key={meeting.id}
+                    onClick={() => handleMeetingClick(meeting.meetingId)}
+                    className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                >
+                    <div className="flex-1">
+                        <div className="flex items-center space-x-3">
+                            <span className="text-xl">📹</span>
+                            <div>
+                                <p className="font-medium text-gray-800">{meeting.title}</p>
+                                <p className="text-sm text-gray-500">
+                                    {new Date(meeting.createdAt).toLocaleDateString()} at{' '}
+                                    {new Date(meeting.createdAt).toLocaleTimeString()}
+                                </p>
+                            </div>
                         </div>
                     </div>
-                ))}
-            </div>
+                    <div className="flex items-center space-x-4">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            meeting.status === 'ACTIVE' 
+                                ? 'bg-green-100 text-green-700' 
+                                : 'bg-gray-100 text-gray-500'
+                        }`}>
+                            {meeting.status}
+                        </span>
+                        <span className="text-sm text-gray-600">
+                            👤 {meeting.participantCount}
+                        </span>
+                        <span className="text-gray-400">→</span>
+                    </div>
+                </div>
+            ))}
         </div>
     );
 };
