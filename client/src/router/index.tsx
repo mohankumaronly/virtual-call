@@ -6,6 +6,7 @@ import Login from '../features/auth/pages/Login';
 import VerifyOtp from '../features/auth/pages/VerifyOtp';
 import Dashboard from '../features/dashboard/pages/Dashboard';
 import UserProfile from '../features/dashboard/components/UserProfile';
+import MeetingPage from '../features/meeting/pages/MeetingPage';
 import ProtectedRoute from '../components/common/ProtectedRoute';
 
 const AppRoutes: React.FC = () => {
@@ -28,6 +29,14 @@ const AppRoutes: React.FC = () => {
                     element={
                         <ProtectedRoute>
                             <UserProfile />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/meeting/:meetingId"
+                    element={
+                        <ProtectedRoute>
+                            <MeetingPage />
                         </ProtectedRoute>
                     }
                 />

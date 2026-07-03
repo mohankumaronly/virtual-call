@@ -27,3 +27,27 @@ export interface AuthContextType {
     sendOtp: (email: string) => Promise<void>;
     fetchCurrentUser: () => Promise<void>;
 }
+
+// Meeting Types
+export interface MeetingResponse {
+    id: number;
+    meetingId: string;
+    title: string;
+    createdBy: number;
+    createdByName: string;
+    status: 'ACTIVE' | 'ENDED';
+    createdAt: string;
+    participantCount: number;
+}
+
+export interface CreateMeetingRequest {
+    title?: string;
+}
+
+export interface MeetingParticipantResponse {
+    userId: number;
+    userName: string;
+    userUsername: string;
+    joinedAt: string;
+    leftAt: string | null;
+}
