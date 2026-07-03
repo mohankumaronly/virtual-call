@@ -32,18 +32,27 @@ public class JwtFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        // Skip authentication for public endpoints
         String path = request.getRequestURI();
+        log.info("Processing request: {}", path);
+
+        // Skip authentication for public endpoints
         if (path.startsWith("/api/auth/send-otp") ||
-                path.startsWith("/api/auth/verify-otp")) {
+                path.startsWith("/api/auth/verify-otp") ||
+                path.startsWith("/ws") ||
+                path.startsWith("/topic")) {
+            log.info("Public endpoint, skipping authentication");
             filterChain.doFilter(request, response);
             return;
         }
 
-        String token = extractTokenFromCookie(request);
+        // Extract token from request (header OR cookie)
+        String token = extractTokenFromRequest(request);
+        log.info("Token extracted: {}", token != null ? "Yes" : "No");
 
         if (token != null && jwtService.isTokenValid(token)) {
             String email = jwtService.extractEmail(token);
+            log.info("Token valid for email: {}", email);
+
             UserDetails userDetails = authService.loadUserByUsername(email);
 
             if (userDetails != null) {
@@ -54,22 +63,41 @@ public class JwtFilter extends OncePerRequestFilter {
                 );
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authToken);
-                log.debug("User authenticated: {}", email);
+                log.info("User authenticated: {}", email);
             }
+        } else {
+            log.warn("No valid token found for request: {}", path);
         }
 
         filterChain.doFilter(request, response);
     }
 
-    private String extractTokenFromCookie(HttpServletRequest request) {
+    private String extractTokenFromRequest(HttpServletRequest request) {
+        // 1. Try Authorization header (Bearer token) - PRIORITY
+        String authHeader = request.getHeader("Authorization");
+        log.info("Authorization header: {}", authHeader != null ? "Present" : "Not present");
+
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            log.info("Token extracted from Authorization header");
+            return token;
+        }
+
+        // 2. Try Cookie (fallback)
         Cookie[] cookies = request.getCookies();
         if (cookies != null) {
+            log.info("Cookies present: {}", cookies.length);
             for (Cookie cookie : cookies) {
+                log.info("Cookie: {} = {}", cookie.getName(), cookie.getValue());
                 if ("jwt".equals(cookie.getName())) {
+                    log.info("Token extracted from Cookie");
                     return cookie.getValue();
                 }
             }
+        } else {
+            log.info("No cookies present");
         }
+
         return null;
     }
 }

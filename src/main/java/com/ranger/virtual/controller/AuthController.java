@@ -18,6 +18,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
@@ -44,17 +47,19 @@ public class AuthController {
 
         // Generate JWT
         String token = authService.generateJwtToken(user);
+        log.info("Generated JWT token for user: {}", user.getEmail());
 
-        // Set cookie
+        // Set cookie (for localhost development)
         Cookie cookie = new Cookie("jwt", token);
         cookie.setHttpOnly(true);
-        cookie.setSecure(false); // Set to true in production with HTTPS
+        cookie.setSecure(false);
         cookie.setPath("/");
         cookie.setMaxAge(7 * 24 * 60 * 60); // 7 days
         cookie.setAttribute("SameSite", "Lax");
         response.addCookie(cookie);
+        log.info("JWT cookie set for user: {}", user.getEmail());
 
-        // Return response with email (user is authenticated)
+        // Return response with token for frontend
         UserResponse userResponse = UserResponse.builder()
                 .id(user.getId())
                 .name(user.getName())
@@ -63,7 +68,12 @@ public class AuthController {
                 .profilePicture(user.getProfilePicture())
                 .build();
 
-        return ResponseEntity.ok(ApiResponse.success("Login successful", userResponse));
+        // Create response with token included
+        Map<String, Object> data = new HashMap<>();
+        data.put("user", userResponse);
+        data.put("token", token);
+
+        return ResponseEntity.ok(ApiResponse.success("Login successful", data));
     }
 
     @GetMapping("/me")
@@ -76,7 +86,6 @@ public class AuthController {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         User user = userDetails.getUser();
 
-        // Return email only for authenticated user
         UserResponse userResponse = UserResponse.builder()
                 .id(user.getId())
                 .name(user.getName())

@@ -1,102 +1,47 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import type { ReactNode } from 'react';
-import api from '../api/axios';
-import type { User, AuthContextType, ApiResponse } from '../types';
-import toast from 'react-hot-toast';
+import axios from 'axios';
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
-export const useAuth = () => {
-    const context = useContext(AuthContext);
-    if (!context) {
-        throw new Error('useAuth must be used within an AuthProvider');
+console.log('API Base URL:', API_BASE_URL);
+
+const api = axios.create({
+    baseURL: API_BASE_URL,
+    headers: {
+        'Content-Type': 'application/json',
+    },
+    withCredentials: true,
+});
+
+// Request interceptor - add token to every request
+api.interceptors.request.use(
+    (config) => {
+        const token = localStorage.getItem('jwt');
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
+        console.log(`Request: ${config.method?.toUpperCase()} ${config.url}`);
+        return config;
+    },
+    (error) => {
+        return Promise.reject(error);
     }
-    return context;
-};
+);
 
-interface AuthProviderProps {
-    children: ReactNode;
-}
-
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-    const [user, setUser] = useState<User | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-
-    const sendOtp = async (email: string) => {
-        try {
-            const response = await api.post<ApiResponse>('/api/auth/send-otp', { email });
-            if (response.data.success) {
-                toast.success(response.data.message);
-            } else {
-                toast.error(response.data.message);
-            }
-        } catch (error: any) {
-            const message = error.response?.data?.message || 'Failed to send OTP';
-            toast.error(message);
-            throw error;
+// Response interceptor - handle auth errors
+api.interceptors.response.use(
+    (response) => {
+        console.log(`Response: ${response.status} ${response.config.url}`);
+        return response;
+    },
+    (error) => {
+        if (error.response?.status === 401 || error.response?.status === 403) {
+            console.log('Authentication error, clearing token');
+            localStorage.removeItem('jwt');
+            delete api.defaults.headers.common['Authorization'];
+            // You can redirect to login here if needed
         }
-    };
+        return Promise.reject(error);
+    }
+);
 
-    const login = async (email: string, otp: string) => {
-        try {
-            const response = await api.post<ApiResponse<User>>('/api/auth/verify-otp', { email, otp });
-            if (response.data.success && response.data.data) {
-                setUser(response.data.data);
-                toast.success(response.data.message);
-            } else {
-                toast.error(response.data.message);
-            }
-        } catch (error: any) {
-            const message = error.response?.data?.message || 'Login failed';
-            toast.error(message);
-            throw error;
-        }
-    };
-
-    const logout = async () => {
-        try {
-            const response = await api.post<ApiResponse>('/api/auth/logout');
-            if (response.data.success) {
-                setUser(null);
-                toast.success(response.data.message);
-            }
-        } catch (error: any) {
-            const message = error.response?.data?.message || 'Logout failed';
-            toast.error(message);
-        }
-    };
-
-    const fetchCurrentUser = async () => {
-        try {
-            const response = await api.get<ApiResponse<User>>('/api/auth/me');
-            if (response.data.success && response.data.data) {
-                setUser(response.data.data);
-            } else {
-                setUser(null);
-            }
-        } catch (error) {
-            setUser(null);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        fetchCurrentUser();
-    }, []);
-
-    const value: AuthContextType = {
-        user,
-        isLoading,
-        login,
-        logout,
-        sendOtp,
-        fetchCurrentUser,
-    };
-
-    return (
-        <AuthContext.Provider value={value}>
-            {children}
-        </AuthContext.Provider>
-    );
-};
+export default api;
