@@ -1,5 +1,5 @@
-# Use OpenJDK 21 as base image
-FROM openjdk:21-jdk-slim
+# Use Eclipse Temurin (the new official OpenJDK distribution)
+FROM eclipse-temurin:21-jdk-alpine
 
 # Set working directory
 WORKDIR /app
@@ -9,8 +9,11 @@ COPY mvnw .
 COPY .mvn .mvn
 COPY pom.xml .
 
+# Make mvnw executable
+RUN chmod +x mvnw
+
 # Download dependencies (cached layer)
-RUN chmod +x mvnw && ./mvnw dependency:go-offline
+RUN ./mvnw dependency:go-offline
 
 # Copy source code
 COPY src src
