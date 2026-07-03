@@ -41,6 +41,7 @@ const MeetingPage: React.FC = () => {
     const hasJoinedRef = useRef<boolean>(false);
     const hasInitiatedCallRef = useRef<boolean>(false);
     const localStreamRef = useRef<MediaStream | null>(null);
+    const isRemoteDescriptionSetRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!meetingId) {
@@ -98,6 +99,7 @@ const MeetingPage: React.FC = () => {
             setIsCallInProgress(false);
             isCallInitiatedRef.current = false;
             hasInitiatedCallRef.current = false;
+            isRemoteDescriptionSetRef.current = false;
         } else if (message.type === 'OFFER') {
             console.log('📩 Received OFFER from:', message.username);
             hasReceivedOfferRef.current = true;
@@ -133,9 +135,9 @@ const MeetingPage: React.FC = () => {
 
         console.log('📩 Received offer from:', message.username);
         isProcessingOfferRef.current = true;
+        isRemoteDescriptionSetRef.current = false;
 
         try {
-            // ✅ Wait for local stream if not available using ref
             if (!localStreamRef.current) {
                 console.log('⏳ Waiting for local stream...');
                 let attempts = 0;
@@ -146,7 +148,6 @@ const MeetingPage: React.FC = () => {
                         console.log(`⏳ Still waiting for camera... (${attempts * 100}ms)`);
                     }
                 }
-
                 if (!localStreamRef.current) {
                     console.error('❌ Local stream not available after waiting');
                     toast.error('Camera not ready. Please refresh and try again.');
@@ -173,6 +174,7 @@ const MeetingPage: React.FC = () => {
             console.log('📡 Setting remote description...');
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
             console.log('✅ Remote description set successfully');
+            isRemoteDescriptionSetRef.current = true;
 
             console.log('📡 Creating answer...');
             const answer = await webRTCServiceRef.current.createAnswer();
@@ -186,9 +188,12 @@ const MeetingPage: React.FC = () => {
             });
             console.log('📤 Answer sent!');
 
+            // ✅ Process pending ICE candidates AFTER remote description is set
             if (pendingIceCandidatesRef.current.length > 0) {
                 console.log('🔄 Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
-                for (const candidate of pendingIceCandidatesRef.current) {
+                const candidatesToProcess = [...pendingIceCandidatesRef.current];
+                pendingIceCandidatesRef.current = [];
+                for (const candidate of candidatesToProcess) {
                     try {
                         await webRTCServiceRef.current.addIceCandidate(candidate);
                         console.log('✅ Pending ICE candidate added');
@@ -196,7 +201,6 @@ const MeetingPage: React.FC = () => {
                         console.error('❌ Error adding pending ICE candidate:', e);
                     }
                 }
-                pendingIceCandidatesRef.current = [];
             }
 
             toast.success('Connected to peer!');
@@ -226,19 +230,22 @@ const MeetingPage: React.FC = () => {
 
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
             console.log('Remote description set for answer');
+            isRemoteDescriptionSetRef.current = true;
             toast.success('Call connected!');
 
+            // ✅ Process pending ICE candidates AFTER remote description is set
             if (pendingIceCandidatesRef.current.length > 0) {
-                console.log('Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
-                for (const candidate of pendingIceCandidatesRef.current) {
+                console.log('🔄 Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
+                const candidatesToProcess = [...pendingIceCandidatesRef.current];
+                pendingIceCandidatesRef.current = [];
+                for (const candidate of candidatesToProcess) {
                     try {
                         await webRTCServiceRef.current.addIceCandidate(candidate);
                         console.log('✅ Pending ICE candidate added');
                     } catch (e) {
-                        console.error('Error adding pending ICE candidate:', e);
+                        console.error('❌ Error adding pending ICE candidate:', e);
                     }
                 }
-                pendingIceCandidatesRef.current = [];
             }
         } catch (error) {
             console.error('Error handling answer:', error);
@@ -254,7 +261,8 @@ const MeetingPage: React.FC = () => {
 
         console.log('Received ICE candidate from:', message.username);
         if (!webRTCServiceRef.current) {
-            console.warn('No WebRTC service for ICE candidate');
+            console.warn('No WebRTC service for ICE candidate, queuing');
+            pendingIceCandidatesRef.current.push(message.payload);
             return;
         }
 
@@ -269,6 +277,7 @@ const MeetingPage: React.FC = () => {
             }
         } catch (error) {
             console.error('Error adding ICE candidate:', error);
+            pendingIceCandidatesRef.current.push(message.payload);
         }
     };
 
@@ -298,17 +307,25 @@ const MeetingPage: React.FC = () => {
                 setIsCallInProgress(false);
                 isCallInitiatedRef.current = false;
                 hasInitiatedCallRef.current = false;
+                isRemoteDescriptionSetRef.current = false;
                 toast.error('Call disconnected');
             }
         });
 
         webRTCServiceRef.current.onIceCandidate((candidate) => {
             if (candidate) {
-                console.log('🧊 Sending ICE candidate');
-                sendSignal(meetingId!, {
-                    type: 'ICE_CANDIDATE',
-                    payload: candidate,
-                });
+                // ✅ Only send ICE candidates if remote description is set
+                const pc = webRTCServiceRef.current?.getPeerConnection();
+                if (pc && pc.remoteDescription) {
+                    console.log('🧊 Sending ICE candidate');
+                    sendSignal(meetingId!, {
+                        type: 'ICE_CANDIDATE',
+                        payload: candidate,
+                    });
+                } else {
+                    console.log('⏳ Remote description not set, queuing ICE candidate locally');
+                    pendingIceCandidatesRef.current.push(candidate);
+                }
             } else {
                 console.log('🧊 ICE gathering complete - sending null candidate');
                 sendSignal(meetingId!, {
@@ -352,11 +369,21 @@ const MeetingPage: React.FC = () => {
                 webRTCServiceRef.current.setLocalStream(localStreamRef.current);
             } else {
                 console.warn('⚠️ No local stream available!');
+                // Wait for stream
+                let attempts = 0;
+                while (!localStreamRef.current && attempts < 30) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    attempts++;
+                }
+                if (localStreamRef.current) {
+                    console.log('✅ Local stream became available');
+                    webRTCServiceRef.current.setLocalStream(localStreamRef.current);
+                }
             }
 
             console.log('📞 Creating offer...');
             const offer = await webRTCServiceRef.current.createOffer();
-            console.log('📤 OFFER created successfully');
+            console.log('✅ OFFER created successfully');
 
             console.log('📤 Sending OFFER to:', targetUserId);
             sendSignal(meetingId!, {
@@ -364,10 +391,11 @@ const MeetingPage: React.FC = () => {
                 payload: offer,
                 targetUserId: targetUserId
             });
+            console.log('✅ OFFER sent!');
 
             toast('Calling participant...', { icon: '📞' });
         } catch (error) {
-            console.error('Error initiating call:', error);
+            console.error('❌ Error initiating call:', error);
             toast.error('Failed to initiate call');
             setIsCallInProgress(false);
             isCallInitiatedRef.current = false;
@@ -705,6 +733,7 @@ const MeetingPage: React.FC = () => {
                             <p>Connection: <span className="font-bold">{peerConnectionState}</span></p>
                             <p>Role: <span className="font-bold">{isCreatorRef.current ? '👑 Creator' : '👤 Participant'}</span></p>
                             <p>Received Offer: <span className="font-bold">{hasReceivedOfferRef.current ? '✅' : '❌'}</span></p>
+                            <p>Remote Desc Set: <span className="font-bold">{isRemoteDescriptionSetRef.current ? '✅' : '❌'}</span></p>
                         </div>
                     </div>
                 </div>
