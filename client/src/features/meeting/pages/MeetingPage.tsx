@@ -76,16 +76,16 @@ const MeetingPage: React.FC = () => {
         if (message.type === 'USER_JOINED') {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
-            
+
             console.log('🔍 isCreatorRef.current:', isCreatorRef.current);
             console.log('🔍 hasJoinedRef.current:', hasJoinedRef.current);
             console.log('🔍 isCallInProgress:', isCallInProgress);
             console.log('🔍 isCallInitiatedRef.current:', isCallInitiatedRef.current);
             console.log('🔍 hasInitiatedCallRef.current:', hasInitiatedCallRef.current);
-            
+
             const isJoiningUserCreator = message.userId === user?.id;
             console.log('🔍 isJoiningUserCreator:', isJoiningUserCreator);
-            
+
             // ✅ Only initiate if all conditions are met
             if (isCreatorRef.current && hasJoinedRef.current && !isCallInProgress && !hasInitiatedCallRef.current && !isJoiningUserCreator) {
                 console.log('📞 Creator initiating call with new participant');
@@ -194,12 +194,12 @@ const MeetingPage: React.FC = () => {
         try {
             const pc = webRTCServiceRef.current.getPeerConnection();
             console.log('Current signaling state:', pc?.signalingState);
-            
+
             if (pc && pc.signalingState === 'stable') {
                 console.log('❌ Cannot set remote answer in stable state - ignoring');
                 return;
             }
-            
+
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
             console.log('Remote description set for answer');
             toast.success('Call connected!');
@@ -287,8 +287,9 @@ const MeetingPage: React.FC = () => {
         console.log('📞 isCallInProgress:', isCallInProgress);
         console.log('📞 isCallInitiatedRef.current:', isCallInitiatedRef.current);
         console.log('📞 isCreatorRef.current:', isCreatorRef.current);
-        
-        // ✅ Check if call is already in progress
+        console.log('📞 targetUserId:', targetUserId);
+        console.log('📞 localStream exists?', !!localStream);
+
         if (isCallInProgress) {
             console.log('Call already in progress');
             return;
@@ -299,23 +300,28 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
-        // ✅ Set flags
         isCallInitiatedRef.current = true;
         setIsCallInProgress(true);
 
         if (!webRTCServiceRef.current) {
+            console.log('📞 Creating new WebRTCService');
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
         }
 
         try {
             if (localStream) {
+                console.log('📞 Setting local stream on WebRTC service');
                 webRTCServiceRef.current.setLocalStream(localStream);
+            } else {
+                console.warn('⚠️ No local stream available!');
             }
 
+            console.log('📞 Creating offer...');
             const offer = await webRTCServiceRef.current.createOffer();
+            console.log('📤 OFFER created successfully:', offer);
+
             console.log('📤 Sending OFFER to:', targetUserId);
-            
             sendSignal(meetingId!, {
                 type: 'OFFER',
                 payload: offer,
@@ -325,7 +331,7 @@ const MeetingPage: React.FC = () => {
             toast('Calling participant...', { icon: '📞' });
         } catch (error) {
             console.error('Error initiating call:', error);
-            toast.error('Failed to initiate call');
+            toast.error('Failed to initiate call: ' + error);
             setIsCallInProgress(false);
             isCallInitiatedRef.current = false;
             hasInitiatedCallRef.current = false;
@@ -451,7 +457,7 @@ const MeetingPage: React.FC = () => {
         console.log('🔵 meeting?.createdBy:', meeting?.createdBy);
         console.log('🔵 participants.length:', participants.length);
         console.log('🔵 ========================================');
-        
+
         if (participants.length < 2) {
             toast.error('Need at least 2 participants to start a call');
             return;
