@@ -22,6 +22,7 @@ export class WebRTCService {
             iceCandidatePoolSize: 10,
         };
 
+        console.log('🎥 Creating WebRTCService');
         this.peerConnection = new RTCPeerConnection(defaultConfig);
         this.setupPeerConnectionListeners();
     }
@@ -29,46 +30,71 @@ export class WebRTCService {
     private setupPeerConnectionListeners(): void {
         if (!this.peerConnection) return;
 
-        // Handle remote stream
         this.peerConnection.ontrack = (event) => {
-            console.log('Remote track received:', event);
+            console.log('🎥 Remote track received:', event);
             this.remoteStream = event.streams[0];
             if (this.onRemoteStreamCallback) {
                 this.onRemoteStreamCallback(event.streams[0]);
             }
         };
 
-        // Handle connection state changes
         this.peerConnection.onconnectionstatechange = () => {
             const state = this.peerConnection?.connectionState || 'disconnected';
-            console.log('Connection state changed:', state);
+            console.log('🎥 Connection state changed:', state);
             if (this.onConnectionStateChangeCallback) {
                 this.onConnectionStateChangeCallback(state);
             }
         };
 
-        // Handle ICE candidates
         this.peerConnection.onicecandidate = (event) => {
             if (event.candidate && this.onIceCandidateCallback) {
-                console.log('ICE candidate generated:', event.candidate);
+                console.log('🎥 ICE candidate generated:', event.candidate);
                 this.onIceCandidateCallback(event.candidate);
+            } else {
+                console.log('🎥 ICE gathering complete');
             }
         };
 
-        // Handle ICE connection state
         this.peerConnection.oniceconnectionstatechange = () => {
             const state = this.peerConnection?.iceConnectionState || 'disconnected';
-            console.log('ICE connection state changed:', state);
+            console.log('🎥 ICE connection state changed:', state);
+        };
+
+        // Add negotiation needed handler
+        this.peerConnection.onnegotiationneeded = () => {
+            console.log('🎥 Negotiation needed');
         };
     }
 
     public setLocalStream(stream: MediaStream): void {
-        if (!this.peerConnection) return;
+        console.log('🎥 setLocalStream called');
+        if (!this.peerConnection) {
+            console.error('🎥 Peer connection is null');
+            return;
+        }
+
+        // Remove existing senders first to avoid "track already set" error
+        const senders = this.peerConnection.getSenders();
+        console.log('🎥 Existing senders:', senders.length);
+        
+        // Remove all existing senders
+        senders.forEach(sender => {
+            try {
+                this.peerConnection?.removeTrack(sender);
+                console.log('🎥 Removed existing sender:', sender.track?.kind);
+            } catch (e) {
+                console.warn('🎥 Could not remove sender:', e);
+            }
+        });
 
         // Add all tracks from the local stream
         stream.getTracks().forEach(track => {
-            console.log('Adding track to peer connection:', track.kind);
-            this.peerConnection?.addTrack(track, stream);
+            try {
+                console.log('🎥 Adding track to peer connection:', track.kind);
+                this.peerConnection?.addTrack(track, stream);
+            } catch (e) {
+                console.error('🎥 Error adding track:', e);
+            }
         });
     }
 
@@ -95,10 +121,10 @@ export class WebRTCService {
                 offerToReceiveVideo: true,
             });
             await this.peerConnection.setLocalDescription(offer);
-            console.log('Offer created:', offer);
+            console.log('🎥 Offer created:', offer);
             return offer;
         } catch (error) {
-            console.error('Failed to create offer:', error);
+            console.error('🎥 Failed to create offer:', error);
             throw error;
         }
     }
@@ -114,10 +140,10 @@ export class WebRTCService {
                 offerToReceiveVideo: true,
             });
             await this.peerConnection.setLocalDescription(answer);
-            console.log('Answer created:', answer);
+            console.log('🎥 Answer created:', answer);
             return answer;
         } catch (error) {
-            console.error('Failed to create answer:', error);
+            console.error('🎥 Failed to create answer:', error);
             throw error;
         }
     }
@@ -129,9 +155,9 @@ export class WebRTCService {
 
         try {
             await this.peerConnection.setRemoteDescription(description);
-            console.log('Remote description set:', description);
+            console.log('🎥 Remote description set');
         } catch (error) {
-            console.error('Failed to set remote description:', error);
+            console.error('🎥 Failed to set remote description:', error);
             throw error;
         }
     }
@@ -143,9 +169,9 @@ export class WebRTCService {
 
         try {
             await this.peerConnection.addIceCandidate(candidate);
-            console.log('ICE candidate added:', candidate);
+            console.log('🎥 ICE candidate added');
         } catch (error) {
-            console.error('Failed to add ICE candidate:', error);
+            console.error('🎥 Failed to add ICE candidate:', error);
             throw error;
         }
     }
@@ -159,12 +185,12 @@ export class WebRTCService {
     }
 
     public close(): void {
+        console.log('🎥 Closing WebRTC connection');
         if (this.peerConnection) {
             this.peerConnection.close();
             this.peerConnection = null;
         }
         this.remoteStream = null;
-        console.log('WebRTC connection closed');
     }
 
     public isConnected(): boolean {
@@ -174,4 +200,4 @@ export class WebRTCService {
     public isConnecting(): boolean {
         return this.peerConnection?.connectionState === 'connecting';
     }
-} 
+}

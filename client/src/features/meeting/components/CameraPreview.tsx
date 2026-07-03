@@ -18,12 +18,18 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+    const streamRef = useRef<MediaStream | null>(null);
 
     useEffect(() => {
         console.log('🔴 CameraPreview mounted, starting camera...');
-        startCamera();
+        
+        // Small delay to ensure video element is rendered
+        const timer = setTimeout(() => {
+            startCamera();
+        }, 300);
 
         return () => {
+            clearTimeout(timer);
             console.log('🔴 CameraPreview unmounting, stopping camera...');
             stopCamera();
         };
@@ -45,13 +51,14 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
             console.log('📷 Video tracks:', mediaStream.getVideoTracks());
             console.log('📷 Audio tracks:', mediaStream.getAudioTracks());
 
+            streamRef.current = mediaStream;
             setStream(mediaStream);
 
+            // Try to set the stream on the video element
             if (videoRef.current) {
                 console.log('📷 Setting srcObject on video element');
                 videoRef.current.srcObject = mediaStream;
                 
-                // Wait for metadata to load before playing
                 videoRef.current.onloadedmetadata = () => {
                     console.log('📷 Video metadata loaded');
                     videoRef.current?.play().then(() => {
@@ -62,17 +69,15 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
                     });
                 };
                 
-                // Try to play immediately as well
                 try {
                     await videoRef.current.play();
                     setIsVideoPlaying(true);
                     console.log('📷 Video playing immediately');
                 } catch (playErr) {
                     console.error('📷 Immediate play failed:', playErr);
-                    // Will retry on loadedmetadata
                 }
             } else {
-                console.error('📷 videoRef.current is null!');
+                console.warn('📷 videoRef.current is null, stream stored for later');
             }
 
             if (onStreamReady) {
@@ -95,13 +100,14 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
 
     const stopCamera = () => {
         console.log('📷 stopCamera called');
-        if (stream) {
-            stream.getTracks().forEach(track => {
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => {
                 console.log(`📷 Stopping ${track.kind} track`);
                 track.stop();
             });
-            setStream(null);
+            streamRef.current = null;
         }
+        setStream(null);
 
         if (videoRef.current) {
             videoRef.current.srcObject = null;
@@ -181,7 +187,6 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
                 </div>
             )}
 
-            {/* Controls overlay */}
             <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex space-x-2">
                 <button
                     onClick={toggleVideo}
@@ -197,12 +202,10 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
                 </button>
             </div>
 
-            {/* Status label */}
             <div className="absolute top-4 left-4 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
                 📹 Your Camera {isVideoPlaying ? '🟢' : '⏳'}
             </div>
 
-            {/* Video info */}
             <div className="absolute bottom-4 right-4 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
                 {stream?.getVideoTracks()[0]?.getSettings().width || '?'}x{stream?.getVideoTracks()[0]?.getSettings().height || '?'}
             </div>
