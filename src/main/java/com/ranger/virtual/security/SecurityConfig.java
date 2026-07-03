@@ -36,6 +36,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/send-otp").permitAll()
                         .requestMatchers("/api/auth/verify-otp").permitAll()
+                        .requestMatchers("/ws/**").permitAll() // Allow WebSocket
+                        .requestMatchers("/topic/**").permitAll() // Allow STOMP topics
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
@@ -47,20 +49,11 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // Parse allowed origins from environment variable (comma-separated)
         List<String> origins = Arrays.asList(allowedOrigins.split(","));
         configuration.setAllowedOrigins(origins);
-
-        // Allow credentials (cookies)
         configuration.setAllowCredentials(true);
-
-        // Allow all common HTTP methods
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-
-        // Allow all headers
         configuration.setAllowedHeaders(Arrays.asList("*"));
-
-        // Expose headers that the client might need
         configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Type"));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

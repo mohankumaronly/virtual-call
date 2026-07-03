@@ -1,14 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../../api/axios';
+import { useWebSocket } from '../../../contexts/WebSocketContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import type { ApiResponse, MeetingResponse } from '../../../types';
 import toast from 'react-hot-toast';
+
+interface Participant {
+    userId: number;
+    username: string;
+    name: string;
+    joinedAt: string;
+}
 
 const MeetingPage: React.FC = () => {
     const { meetingId } = useParams<{ meetingId: string }>();
     const [meeting, setMeeting] = useState<MeetingResponse | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isJoining, setIsJoining] = useState(false);
+    const [participants, setParticipants] = useState<Participant[]>([]);
+    const { user } = useAuth();
+    const { isConnected, joinMeeting, leaveMeeting, subscribeToMeeting, unsubscribeFromMeeting } = useWebSocket();
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -17,17 +29,36 @@ const MeetingPage: React.FC = () => {
             return;
         }
         fetchMeeting();
+        fetchParticipants();
         
-        // Set up polling to refresh meeting data every 5 seconds
-        const interval = setInterval(() => {
+        // Subscribe to WebSocket updates
+        if (isConnected) {
+            subscribeToMeeting(meetingId, handleWebSocketMessage);
+        }
+        
+        return () => {
             if (meetingId) {
-                fetchMeetingSilent();
+                unsubscribeFromMeeting(meetingId);
+                leaveMeeting(meetingId);
             }
-        }, 5000);
+        };
+    }, [meetingId, isConnected]);
+
+    const handleWebSocketMessage = (message: any) => {
+        console.log('WebSocket message:', message);
         
-        // Cleanup interval on component unmount
-        return () => clearInterval(interval);
-    }, [meetingId]);
+        if (message.type === 'USER_JOINED') {
+            toast.success(`${message.name || message.username} joined the meeting`);
+            // Refresh participants
+            fetchParticipants();
+        } else if (message.type === 'USER_LEFT') {
+            toast(`${message.username} left the meeting`, {
+                icon: '👋',
+            });
+            // Refresh participants
+            fetchParticipants();
+        }
+    };
 
     const fetchMeeting = async () => {
         setIsLoading(true);
@@ -50,18 +81,23 @@ const MeetingPage: React.FC = () => {
         }
     };
 
-    // Silent fetch without loading state (for polling)
-    const fetchMeetingSilent = async () => {
+    const fetchParticipants = async () => {
         if (!meetingId) return;
         try {
-            const response = await api.get<ApiResponse<MeetingResponse>>(
-                `/api/meetings/${meetingId}`
+            const response = await api.get<ApiResponse<any[]>>(
+                `/api/meetings/${meetingId}/participants`
             );
             if (response.data.success && response.data.data) {
-                setMeeting(response.data.data);
+                const participantList = response.data.data.map((p: any) => ({
+                    userId: p.userId,
+                    username: p.userUsername,
+                    name: p.userName,
+                    joinedAt: p.joinedAt
+                }));
+                setParticipants(participantList);
             }
         } catch (error) {
-            // Silent fail for polling
+            console.error('Failed to fetch participants:', error);
         }
     };
 
@@ -72,8 +108,12 @@ const MeetingPage: React.FC = () => {
             const response = await api.post<ApiResponse>(`/api/meetings/${meetingId}/join`);
             if (response.data.success) {
                 toast.success(response.data.message);
-                // Refresh meeting data immediately after joining
                 await fetchMeeting();
+                await fetchParticipants();
+                // Notify via WebSocket
+                if (isConnected && user) {
+                    joinMeeting(meetingId);
+                }
             } else {
                 toast.error(response.data.message || 'Failed to join meeting');
             }
@@ -110,11 +150,6 @@ const MeetingPage: React.FC = () => {
         }
     };
 
-    const handleRefresh = () => {
-        fetchMeeting();
-        toast.success('Refreshed meeting data');
-    };
-
     if (isLoading) {
         return (
             <div className="flex justify-center items-center h-64">
@@ -139,12 +174,12 @@ const MeetingPage: React.FC = () => {
             <div className="bg-white rounded-lg shadow-lg p-8">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl font-bold text-gray-800">Meeting</h2>
-                    <button
-                        onClick={handleRefresh}
-                        className="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
-                    >
-                        🔄 Refresh
-                    </button>
+                    <div className="flex items-center space-x-2">
+                        <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                        <span className="text-sm text-gray-500">
+                            {isConnected ? 'Connected' : 'Disconnected'}
+                        </span>
+                    </div>
                 </div>
                 
                 <div className="space-y-3">
@@ -160,10 +195,31 @@ const MeetingPage: React.FC = () => {
                         </span>
                     </p>
                     <p><strong>Participants:</strong> 
-                        <span className="ml-2 font-bold text-blue-600">{meeting.participantCount}</span>
+                        <span className="ml-2 font-bold text-blue-600">{participants.length}</span>
                     </p>
                     <p><strong>Created by:</strong> {meeting.createdByName}</p>
                     <p><strong>Created at:</strong> {new Date(meeting.createdAt).toLocaleString()}</p>
+                </div>
+
+                {/* Participants List */}
+                <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                    <h3 className="font-semibold text-gray-700 mb-3">Participants</h3>
+                    {participants.length === 0 ? (
+                        <p className="text-gray-500 text-sm">No participants yet</p>
+                    ) : (
+                        <ul className="space-y-2">
+                            {participants.map((p) => (
+                                <li key={p.userId} className="flex items-center space-x-2">
+                                    <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                                    <span className="font-medium">{p.name}</span>
+                                    <span className="text-gray-500 text-sm">(@{p.username})</span>
+                                    {p.userId === user?.id && (
+                                        <span className="text-xs text-blue-600 font-medium">(You)</span>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
                 </div>
 
                 <div className="mt-6 flex flex-wrap gap-3">
@@ -180,7 +236,7 @@ const MeetingPage: React.FC = () => {
                     >
                         {isJoining ? 'Joining...' : '👋 Join Meeting'}
                     </button>
-                    {meeting.createdBy === parseInt(localStorage.getItem('userId') || '0') && (
+                    {meeting.createdBy === user?.id && (
                         <button 
                             onClick={handleEndMeeting}
                             className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
@@ -203,10 +259,10 @@ const MeetingPage: React.FC = () => {
                         No video or audio yet. Share the link to invite others.
                     </p>
                     <p className="text-sm text-yellow-600 mt-2">
-                        Current participants: <span className="font-bold">{meeting.participantCount}</span>
+                        Connected: <span className="font-bold">{isConnected ? '✅' : '❌'}</span>
                     </p>
-                    <p className="text-xs text-yellow-500 mt-1">
-                        Auto-refreshes every 5 seconds
+                    <p className="text-sm text-yellow-600">
+                        Participants: <span className="font-bold">{participants.length}</span>
                     </p>
                 </div>
             </div>
