@@ -7,7 +7,8 @@ export class WebRTCService {
     private remoteStream: MediaStream | null = null;
     private onRemoteStreamCallback: ((stream: MediaStream) => void) | null = null;
     private onConnectionStateChangeCallback: ((state: RTCPeerConnectionState) => void) | null = null;
-    private onIceCandidateCallback: ((candidate: RTCIceCandidate) => void) | null = null;
+    private onIceCandidateCallback: ((candidate: RTCIceCandidate | null) => void) | null = null;
+    private onIceConnectionStateChangeCallback: ((state: RTCIceConnectionState) => void) | null = null;
 
     constructor() {
         const defaultConfig: RTCConfiguration = {
@@ -16,6 +17,9 @@ export class WebRTCService {
                     urls: [
                         'stun:stun.l.google.com:19302',
                         'stun:stun1.l.google.com:19302',
+                        'stun:stun2.l.google.com:19302',
+                        'stun:stun3.l.google.com:19302',
+                        'stun:stun4.l.google.com:19302',
                     ]
                 }
             ],
@@ -30,14 +34,16 @@ export class WebRTCService {
     private setupPeerConnectionListeners(): void {
         if (!this.peerConnection) return;
 
+        // ✅ Handle remote tracks (video/audio)
         this.peerConnection.ontrack = (event) => {
-            console.log('🎥 Remote track received:', event);
+            console.log('🎥 Remote track received:', event.track.kind);
             this.remoteStream = event.streams[0];
             if (this.onRemoteStreamCallback) {
                 this.onRemoteStreamCallback(event.streams[0]);
             }
         };
 
+        // ✅ Handle connection state changes
         this.peerConnection.onconnectionstatechange = () => {
             const state = this.peerConnection?.connectionState || 'disconnected';
             console.log('🎥 Connection state changed:', state);
@@ -46,20 +52,25 @@ export class WebRTCService {
             }
         };
 
+        // ✅ Handle ICE candidates - send ALL candidates including null
         this.peerConnection.onicecandidate = (event) => {
-            if (event.candidate && this.onIceCandidateCallback) {
-                console.log('🎥 ICE candidate generated:', event.candidate);
+            if (this.onIceCandidateCallback) {
+                // Send the candidate (or null for gathering complete)
+                console.log('🎥 ICE candidate event:', event.candidate ? 'candidate' : 'gathering complete');
                 this.onIceCandidateCallback(event.candidate);
-            } else {
-                console.log('🎥 ICE gathering complete');
             }
         };
 
+        // ✅ Handle ICE connection state changes
         this.peerConnection.oniceconnectionstatechange = () => {
             const state = this.peerConnection?.iceConnectionState || 'disconnected';
             console.log('🎥 ICE connection state changed:', state);
+            if (this.onIceConnectionStateChangeCallback) {
+                this.onIceConnectionStateChangeCallback(state);
+            }
         };
 
+        // ✅ Handle negotiation needed
         this.peerConnection.onnegotiationneeded = () => {
             console.log('🎥 Negotiation needed');
         };
@@ -72,6 +83,7 @@ export class WebRTCService {
             return;
         }
 
+        // Remove existing senders first to avoid "track already set" error
         const senders = this.peerConnection.getSenders();
         console.log('🎥 Existing senders:', senders.length);
         
@@ -84,6 +96,7 @@ export class WebRTCService {
             }
         });
 
+        // Add all tracks from the local stream
         stream.getTracks().forEach(track => {
             try {
                 console.log('🎥 Adding track to peer connection:', track.kind);
@@ -102,8 +115,12 @@ export class WebRTCService {
         this.onConnectionStateChangeCallback = callback;
     }
 
-    public onIceCandidate(callback: (candidate: RTCIceCandidate) => void): void {
+    public onIceCandidate(callback: (candidate: RTCIceCandidate | null) => void): void {
         this.onIceCandidateCallback = callback;
+    }
+
+    public onIceConnectionStateChange(callback: (state: RTCIceConnectionState) => void): void {
+        this.onIceConnectionStateChangeCallback = callback;
     }
 
     public async createOffer(): Promise<RTCSessionDescriptionInit> {
@@ -172,7 +189,6 @@ export class WebRTCService {
         }
     }
 
-    // ✅ ADD THIS METHOD
     public getPeerConnection(): RTCPeerConnection | null {
         return this.peerConnection;
     }
@@ -183,6 +199,10 @@ export class WebRTCService {
 
     public getConnectionState(): RTCPeerConnectionState {
         return this.peerConnection?.connectionState || 'disconnected';
+    }
+
+    public getIceConnectionState(): RTCIceConnectionState {
+        return this.peerConnection?.iceConnectionState || 'disconnected';
     }
 
     public close(): void {

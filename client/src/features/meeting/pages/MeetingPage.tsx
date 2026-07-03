@@ -137,22 +137,28 @@ const MeetingPage: React.FC = () => {
         isProcessingOfferRef.current = true;
 
         try {
+            // Close existing connection if any
             if (webRTCServiceRef.current) {
                 webRTCServiceRef.current.close();
                 webRTCServiceRef.current = null;
             }
 
+            // Create new WebRTC service
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
 
+            // ✅ Add local stream FIRST
             if (localStream) {
+                console.log('Adding local stream to peer connection');
                 webRTCServiceRef.current.setLocalStream(localStream);
             }
 
+            // ✅ Set remote description (this triggers the connection)
             console.log('Setting remote description...');
             await webRTCServiceRef.current.setRemoteDescription(message.payload);
             console.log('Remote description set successfully');
 
+            // ✅ Create and send answer
             const answer = await webRTCServiceRef.current.createAnswer();
             console.log('Answer created, sending...');
 
@@ -162,6 +168,7 @@ const MeetingPage: React.FC = () => {
                 targetUserId: message.userId
             });
 
+            // ✅ Process any pending ICE candidates
             if (pendingIceCandidatesRef.current.length > 0) {
                 console.log('Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
                 for (const candidate of pendingIceCandidatesRef.current) {
@@ -223,6 +230,12 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleIceCandidate = async (message: any) => {
+        // ✅ Handle null candidate (gathering complete signal)
+        if (!message.payload) {
+            console.log('⏳ ICE gathering complete signal received');
+            return;
+        }
+
         console.log('Received ICE candidate from:', message.username);
         if (!webRTCServiceRef.current) {
             console.warn('No WebRTC service for ICE candidate');
@@ -274,11 +287,20 @@ const MeetingPage: React.FC = () => {
         });
 
         webRTCServiceRef.current.onIceCandidate((candidate) => {
-            console.log('🧊 Sending ICE candidate');
-            sendSignal(meetingId!, {
-                type: 'ICE_CANDIDATE',
-                payload: candidate,
-            });
+            if (candidate) {
+                console.log('🧊 Sending ICE candidate');
+                sendSignal(meetingId!, {
+                    type: 'ICE_CANDIDATE',
+                    payload: candidate,
+                });
+            } else {
+                console.log('🧊 ICE gathering complete - sending null candidate');
+                // Send null candidate to signal gathering complete
+                sendSignal(meetingId!, {
+                    type: 'ICE_CANDIDATE',
+                    payload: null,
+                });
+            }
         });
     };
 
