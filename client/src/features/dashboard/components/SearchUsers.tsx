@@ -8,7 +8,7 @@ interface SearchUsersProps {
     onSelectUser: (userId: number) => void;
 }
 
-const SearchUsers: React.FC<SearchUsersProps> = ({ onSelectUser }) => {
+const SearchUsers: React.FC<SearchUsersProps> = ({ }) => {
     const [query, setQuery] = useState('');
     const [users, setUsers] = useState<PublicUser[]>([]);
     const [isLoading, setIsLoading] = useState(false);
