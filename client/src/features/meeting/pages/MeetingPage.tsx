@@ -26,10 +26,11 @@ const MeetingPage: React.FC = () => {
     const [peerState, setPeerState] = useState<string>('disconnected');
     const [isCallActive, setIsCallActive] = useState(false);
     const [peerId, setPeerId] = useState<string | null>(null);
-    const [] = useState<string | null>(null);
+    const [remotePeerId, setRemotePeerId] = useState<string | null>(null);
+    const [isPeerReady, setIsPeerReady] = useState<boolean>(false);
 
     const { user } = useAuth();
-    const { isConnected, joinMeeting, leaveMeeting, subscribeToMeeting, unsubscribeFromMeeting } = useWebSocket();
+    const { isConnected, joinMeeting, leaveMeeting, subscribeToMeeting, unsubscribeFromMeeting, sendSignal } = useWebSocket();
     const navigate = useNavigate();
 
     const peerServiceRef = useRef<PeerService | null>(null);
@@ -37,6 +38,9 @@ const MeetingPage: React.FC = () => {
     const hasJoinedRef = useRef<boolean>(false);
     const localStreamRef = useRef<MediaStream | null>(null);
     const isCreatorRef = useRef<boolean>(false);
+    const myPeerIdRef = useRef<string | null>(null);
+    const remotePeerIdRef = useRef<string | null>(null);
+    const callInitiatedRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!meetingId) {
@@ -77,12 +81,13 @@ const MeetingPage: React.FC = () => {
             console.log('🔍 isJoiningUserCreator:', isJoiningUserCreator);
 
             // ✅ Auto-start call when second user joins (only if creator)
-            if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator) {
+            if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current) {
                 console.log('📞 Creator initiating call with new participant');
-                // Wait a moment for the peer to be ready
+                callInitiatedRef.current = true;
+                // Wait for peer to be ready and remote peer ID to be received
                 setTimeout(() => {
                     initiateCallWithPeer(message.userId);
-                }, 2000);
+                }, 3000);
             }
         } else if (message.type === 'USER_LEFT') {
             toast(`${message.username} left the meeting`, { icon: '👋' });
@@ -90,27 +95,49 @@ const MeetingPage: React.FC = () => {
             setIsCallActive(false);
             setPeerState('disconnected');
             setRemoteStream(null);
+            callInitiatedRef.current = false;
+        } else if (message.type === 'PEER_ID') {
+            console.log('📩 Received Peer ID from:', message.username, 'ID:', message.peerId);
+            // Store the other peer's ID
+            if (message.userId !== user?.id) {
+                remotePeerIdRef.current = message.peerId;
+                setRemotePeerId(message.peerId);
+                console.log('🎯 Remote Peer ID stored:', message.peerId);
+                
+                // If we're the creator and remote peer ID is received, initiate call
+                if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !callInitiatedRef.current) {
+                    console.log('📞 Remote peer ready, initiating call');
+                    callInitiatedRef.current = true;
+                    setTimeout(() => {
+                        initiateCallWithPeer(message.userId);
+                    }, 1000);
+                }
+            }
         }
     };
 
     const initiateCallWithPeer = async (targetUserId: number) => {
         console.log('📞 Initiating call with peer:', targetUserId);
         
-        // Find the other participant's username
-        const otherParticipant = participants.find(p => p.userId === targetUserId);
-        if (!otherParticipant) {
-            console.error('❌ Other participant not found');
-            toast.error('Other participant not found');
+        // Use the remote peer ID from WebSocket
+        const targetPeerId = remotePeerIdRef.current;
+        if (!targetPeerId) {
+            console.error('❌ Remote peer ID not available');
+            toast.error('Remote peer not ready');
             return;
         }
 
-        // Use username as peer ID (or create a mapping)
-        const targetPeerId = `user-${otherParticipant.username}`;
         console.log('🎯 Target Peer ID:', targetPeerId);
 
         if (!peerServiceRef.current) {
             console.error('❌ Peer service not initialized');
             toast.error('Peer service not ready');
+            return;
+        }
+
+        if (!peerServiceRef.current.isPeerReady()) {
+            console.error('❌ Peer service not ready');
+            toast.error('Peer not ready');
             return;
         }
 
@@ -121,7 +148,8 @@ const MeetingPage: React.FC = () => {
             toast('Calling participant...', { icon: '📞' });
         } catch (error) {
             console.error('❌ Error calling peer:', error);
-            toast.error('Failed to call peer');
+            toast.error('Failed to call peer: ' + (error instanceof Error ? error.message : 'Unknown error'));
+            callInitiatedRef.current = false;
         }
     };
 
@@ -227,6 +255,7 @@ const MeetingPage: React.FC = () => {
                 if (state === 'disconnected') {
                     setIsCallActive(false);
                     setRemoteStream(null);
+                    callInitiatedRef.current = false;
                 }
             });
 
@@ -234,24 +263,27 @@ const MeetingPage: React.FC = () => {
             peerServiceRef.current.onError((error) => {
                 console.error('❌ Peer error:', error);
                 toast.error('Peer connection error: ' + error.message);
+                callInitiatedRef.current = false;
             });
 
-            // Get peer ID
-            const id = peerServiceRef.current.getPeerId();
-            if (id) {
+            // ✅ Handle peer ready event
+            peerServiceRef.current.onPeerReady((id) => {
+                console.log('📡 Peer ready with ID:', id);
+                myPeerIdRef.current = id;
                 setPeerId(id);
-                console.log('📡 My Peer ID:', id);
-            } else {
-                // Wait for peer to be ready
-                const checkPeerId = setInterval(() => {
-                    const pid = peerServiceRef.current?.getPeerId();
-                    if (pid) {
-                        setPeerId(pid);
-                        console.log('📡 My Peer ID:', pid);
-                        clearInterval(checkPeerId);
-                    }
-                }, 500);
-            }
+                setIsPeerReady(true);
+                
+                // ✅ Share peer ID with other participants via WebSocket
+                if (meetingId && user) {
+                    sendSignal(meetingId, {
+                        type: 'PEER_ID',
+                        peerId: id,
+                        userId: user.id,
+                        username: user.username
+                    });
+                    console.log('📤 Shared Peer ID:', id);
+                }
+            });
         }
     };
 
@@ -301,8 +333,19 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
+        if (callInitiatedRef.current) {
+            toast('Call already in progress', { icon: 'ℹ️' });
+            return;
+        }
+
+        if (!remotePeerIdRef.current) {
+            toast('Waiting for other participant to be ready...', { icon: '⏳' });
+            return;
+        }
+
         const otherParticipant = participants.find(p => p.userId !== user?.id);
         if (otherParticipant) {
+            callInitiatedRef.current = true;
             await initiateCallWithPeer(otherParticipant.userId);
         }
     };
@@ -391,6 +434,11 @@ const MeetingPage: React.FC = () => {
                                                     Your ID: {peerId}
                                                 </p>
                                             )}
+                                            {remotePeerId && (
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    Remote ID: {remotePeerId}
+                                                </p>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -419,10 +467,10 @@ const MeetingPage: React.FC = () => {
                             >
                                 📋 Copy Link
                             </button>
-                            {hasJoinedRef.current && !isCallActive && isCreatorRef.current && (
+                            {hasJoinedRef.current && !isCallActive && isCreatorRef.current && !callInitiatedRef.current && (
                                 <button
                                     onClick={handleStartCall}
-                                    disabled={participants.length < 2}
+                                    disabled={participants.length < 2 || !remotePeerId}
                                     className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
                                 >
                                     📞 Start Call
@@ -492,8 +540,13 @@ const MeetingPage: React.FC = () => {
                             <p>Call: <span className="font-bold">{isCallActive ? '📞 Active' : '⏸️ Inactive'}</span></p>
                             <p>Peer State: <span className="font-bold">{peerState}</span></p>
                             <p>Role: <span className="font-bold">{isCreatorRef.current ? '👑 Creator' : '👤 Participant'}</span></p>
+                            <p>Peer Ready: <span className="font-bold">{isPeerReady ? '✅' : '❌'}</span></p>
+                            <p>Remote Peer: <span className="font-bold">{remotePeerId ? '✅' : '❌'}</span></p>
                             {peerId && (
                                 <p className="text-xs text-gray-500">Your ID: {peerId}</p>
+                            )}
+                            {remotePeerId && (
+                                <p className="text-xs text-gray-500">Remote ID: {remotePeerId}</p>
                             )}
                         </div>
                     </div>

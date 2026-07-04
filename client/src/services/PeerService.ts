@@ -8,7 +8,9 @@ export class PeerService {
     private onRemoteStreamCallback: ((stream: MediaStream) => void) | null = null;
     private onConnectionStateChangeCallback: ((state: string) => void) | null = null;
     private onErrorCallback: ((error: Error) => void) | null = null;
+    private onPeerReadyCallback: ((peerId: string) => void) | null = null;
     private peerId: string | null = null;
+    private isReady: boolean = false;
 
     constructor() {
         console.log('🎥 Creating PeerService');
@@ -23,19 +25,21 @@ export class PeerService {
                     { urls: 'stun:stun4.l.google.com:19302' },
                 ]
             },
-            debug: 2 // Enable debug logs
+            debug: 2
         });
 
-        // ✅ Listen for peer connection open
         this.peer.on('open', (id) => {
             this.peerId = id;
+            this.isReady = true;
             console.log('✅ PeerJS connected! Peer ID:', id);
             if (this.onConnectionStateChangeCallback) {
                 this.onConnectionStateChangeCallback('connected');
             }
+            if (this.onPeerReadyCallback) {
+                this.onPeerReadyCallback(id);
+            }
         });
 
-        // ✅ Handle incoming calls
         this.peer.on('call', (call) => {
             console.log('📞 Incoming call from:', call.peer);
             this.currentCall = call;
@@ -67,7 +71,6 @@ export class PeerService {
             }
         });
 
-        // ✅ Handle errors
         this.peer.on('error', (err) => {
             console.error('❌ PeerJS error:', err);
             if (this.onErrorCallback) {
@@ -75,9 +78,9 @@ export class PeerService {
             }
         });
 
-        // ✅ Handle disconnection
         this.peer.on('disconnected', () => {
             console.log('❌ PeerJS disconnected');
+            this.isReady = false;
             if (this.onConnectionStateChangeCallback) {
                 this.onConnectionStateChangeCallback('disconnected');
             }
@@ -91,6 +94,14 @@ export class PeerService {
 
     public getPeerId(): string | null {
         return this.peerId;
+    }
+
+    public isPeerReady(): boolean {
+        return this.isReady;
+    }
+
+    public onPeerReady(callback: (peerId: string) => void): void {
+        this.onPeerReadyCallback = callback;
     }
 
     public onRemoteStream(callback: (stream: MediaStream) => void): void {
@@ -111,6 +122,9 @@ export class PeerService {
         }
         if (!this.localStream) {
             throw new Error('Local stream not available');
+        }
+        if (!this.isReady) {
+            throw new Error('Peer not ready yet');
         }
         
         console.log('📞 Calling peer:', peerId);
@@ -163,5 +177,6 @@ export class PeerService {
         }
         this.remoteStream = null;
         this.localStream = null;
+        this.isReady = false;
     }
 }
