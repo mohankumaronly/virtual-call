@@ -114,18 +114,26 @@ const MeetingPage: React.FC = () => {
             console.log('📩 Received ICE_CANDIDATE from:', message.username);
             handleIceCandidate(message);
         } else if (message.type === 'SIGNAL') {
-            const payload = message.payload;
-            console.log('📩 Received SIGNAL, payload type:', payload?.type);
+            console.log('📩 Received SIGNAL from:', message.username);
+            console.log('📩 Full SIGNAL message:', message);
+            console.log('📩 SIGNAL payload:', message.payload);
+            console.log('📩 SIGNAL payload type:', message.payload?.type);
 
+            const payload = message.payload;
             if (payload && payload.type) {
                 if (payload.type === 'OFFER') {
+                    console.log('📩 Extracted OFFER from SIGNAL');
                     hasReceivedOfferRef.current = true;
                     handleOffer({ ...message, payload: payload.payload || payload });
                 } else if (payload.type === 'ANSWER') {
+                    console.log('📩 Extracted ANSWER from SIGNAL');
                     handleAnswer({ ...message, payload: payload.payload || payload });
                 } else if (payload.type === 'ICE_CANDIDATE') {
+                    console.log('📩 Extracted ICE_CANDIDATE from SIGNAL');
                     handleIceCandidate({ ...message, payload: payload.payload || payload });
                 }
+            } else {
+                console.warn('⚠️ Received SIGNAL with no payload type:', message);
             }
         }
     };
@@ -233,7 +241,7 @@ const MeetingPage: React.FC = () => {
 
     const handleAnswer = async (message: any) => {
         console.log('Received answer from:', message.username);
-        
+
         // ✅ Check if WebRTC service is ready
         if (!webRTCServiceRef.current || !isWebRTCReadyRef.current) {
             console.warn('WebRTC not ready for answer - queueing');
@@ -282,7 +290,7 @@ const MeetingPage: React.FC = () => {
         }
 
         console.log('Received ICE candidate from:', message.username);
-        
+
         // ✅ Check if WebRTC service is ready
         if (!webRTCServiceRef.current || !isWebRTCReadyRef.current) {
             console.warn('WebRTC not ready for ICE candidate, queuing');
@@ -444,7 +452,7 @@ const MeetingPage: React.FC = () => {
                 }
             }
         }
-        
+
         // Process pending ICE candidates
         if (pendingIceCandidatesRef.current.length > 0) {
             console.log('🔄 Processing pending ICE candidates after WebRTC ready:', pendingIceCandidatesRef.current.length);
@@ -543,7 +551,7 @@ const MeetingPage: React.FC = () => {
             setupWebRTCListeners();
             isWebRTCReadyRef.current = true;
             webRTCServiceRef.current.setLocalStream(stream);
-            
+
             // ✅ Process any pending messages now that WebRTC is ready
             processPendingMessages();
         }

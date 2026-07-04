@@ -140,18 +140,18 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             return;
         }
 
-        // ✅ The payload already contains the type (OFFER, ANSWER, ICE_CANDIDATE)
         const message = {
-            type: 'SIGNAL',  // This is the wrapper type
+            type: 'SIGNAL',
             meetingId: meetingId,
             userId: user?.id,
             username: user?.username,
             name: user?.name,
-            payload: payload,  // This contains { type: 'OFFER', payload: ... }
+            payload: payload,
             timestamp: Date.now()
         };
 
-        console.log('📤 Sending SIGNAL:', payload.type);
+        console.log('📤 Sending SIGNAL - payload type:', payload?.type);
+        console.log('📤 Full message:', message);
 
         clientRef.current.publish({
             destination: `/app/meeting/${meetingId}/signal`,
