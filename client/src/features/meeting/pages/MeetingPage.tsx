@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate }  from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../../api/axios';
 import { useWebSocket } from '../../../contexts/WebSocketContext';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -44,6 +44,7 @@ const MeetingPage: React.FC = () => {
     const localStreamRef = useRef<MediaStream | null>(null);
     const isRemoteDescriptionSetRef = useRef<boolean>(false);
     const isWebRTCReadyRef = useRef<boolean>(false);
+    const cameraStartedRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!meetingId) {
@@ -106,7 +107,6 @@ const MeetingPage: React.FC = () => {
         } else if (message.type === 'OFFER') {
             console.log('📩 Received OFFER from:', message.username);
             hasReceivedOfferRef.current = true;
-            // ✅ Check if we're already processing an offer
             if (isProcessingOfferRef.current) {
                 console.log('⏳ Currently processing an offer, queueing OFFER');
                 pendingMessagesRef.current.push({ type: 'OFFER', message });
@@ -115,7 +115,6 @@ const MeetingPage: React.FC = () => {
             handleOffer(message);
         } else if (message.type === 'ANSWER') {
             console.log('📩 Received ANSWER from:', message.username);
-            // ✅ Check if we're in the middle of processing an offer
             if (isProcessingOfferRef.current) {
                 console.log('⏳ Currently processing an offer, queueing ANSWER');
                 pendingMessagesRef.current.push({ type: 'ANSWER', message });
@@ -124,7 +123,6 @@ const MeetingPage: React.FC = () => {
             handleAnswer(message);
         } else if (message.type === 'ICE_CANDIDATE') {
             console.log('📩 Received ICE_CANDIDATE from:', message.username);
-            // ✅ Check if we're in the middle of processing an offer
             if (isProcessingOfferRef.current) {
                 console.log('⏳ Currently processing an offer, queueing ICE_CANDIDATE');
                 pendingMessagesRef.current.push({ type: 'ICE_CANDIDATE', message });
@@ -139,7 +137,6 @@ const MeetingPage: React.FC = () => {
 
             const payload = message.payload;
             if (payload && payload.type) {
-                // ✅ Check if we're processing an offer before handling
                 if (isProcessingOfferRef.current) {
                     console.log('⏳ Currently processing an offer, queueing SIGNAL:', payload.type);
                     pendingMessagesRef.current.push({ type: 'SIGNAL', message, payloadType: payload.type });
@@ -175,22 +172,23 @@ const MeetingPage: React.FC = () => {
         isWebRTCReadyRef.current = false;
 
         try {
+            // ✅ If no local stream, try to start camera
             if (!localStreamRef.current) {
-                console.log('⏳ Waiting for local stream...');
-                let attempts = 0;
-                while (!localStreamRef.current && attempts < 50) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    attempts++;
-                    if (attempts % 10 === 0) {
-                        console.log(`⏳ Still waiting for camera... (${attempts * 100}ms)`);
-                    }
-                }
-                if (!localStreamRef.current) {
-                    console.error('❌ Local stream not available after waiting');
-                    toast.error('Camera not ready. Please refresh and try again.');
+                console.log('⏳ No local stream, attempting to start camera...');
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: true,
+                        audio: true
+                    });
+                    localStreamRef.current = stream;
+                    cameraStartedRef.current = true;
+                    console.log('✅ Camera started successfully in handleOffer');
+                    toast.success('Camera started!');
+                } catch (cameraError) {
+                    console.error('❌ Failed to start camera:', cameraError);
+                    toast.error('Unable to access camera. Please check permissions.');
                     return;
                 }
-                console.log('✅ Local stream is now available');
             }
 
             if (webRTCServiceRef.current) {
@@ -272,7 +270,6 @@ const MeetingPage: React.FC = () => {
     const handleAnswer = async (message: any) => {
         console.log('Received answer from:', message.username);
 
-        // ✅ Check if WebRTC service is ready
         if (!webRTCServiceRef.current || !isWebRTCReadyRef.current) {
             console.warn('WebRTC not ready for answer - queueing');
             pendingMessagesRef.current.push({ type: 'ANSWER', message });
@@ -293,7 +290,6 @@ const MeetingPage: React.FC = () => {
             isRemoteDescriptionSetRef.current = true;
             toast.success('Call connected!');
 
-            // Process pending ICE candidates
             if (pendingIceCandidatesRef.current.length > 0) {
                 console.log('🔄 Processing pending ICE candidates:', pendingIceCandidatesRef.current.length);
                 const candidatesToProcess = [...pendingIceCandidatesRef.current];
@@ -321,7 +317,6 @@ const MeetingPage: React.FC = () => {
 
         console.log('Received ICE candidate from:', message.username);
 
-        // ✅ Check if WebRTC service is ready
         if (!webRTCServiceRef.current || !isWebRTCReadyRef.current) {
             console.warn('WebRTC not ready for ICE candidate, queuing');
             pendingIceCandidatesRef.current.push(message.payload);
@@ -432,14 +427,18 @@ const MeetingPage: React.FC = () => {
                 webRTCServiceRef.current.setLocalStream(localStreamRef.current);
             } else {
                 console.warn('⚠️ No local stream available!');
-                let attempts = 0;
-                while (!localStreamRef.current && attempts < 30) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    attempts++;
-                }
-                if (localStreamRef.current) {
-                    console.log('✅ Local stream became available');
-                    webRTCServiceRef.current.setLocalStream(localStreamRef.current);
+                // Try to start camera
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: true,
+                        audio: true
+                    });
+                    localStreamRef.current = stream;
+                    cameraStartedRef.current = true;
+                    webRTCServiceRef.current.setLocalStream(stream);
+                    console.log('✅ Camera started in initiateCall');
+                } catch (e) {
+                    console.error('❌ Failed to start camera in initiateCall:', e);
                 }
             }
 
@@ -467,7 +466,6 @@ const MeetingPage: React.FC = () => {
     };
 
     const processPendingMessages = async () => {
-        // ✅ Process any pending messages now that WebRTC is ready
         if (pendingMessagesRef.current.length > 0) {
             console.log('🔄 Processing pending messages after WebRTC ready:', pendingMessagesRef.current.length);
             const messagesToProcess = [...pendingMessagesRef.current];
@@ -486,7 +484,6 @@ const MeetingPage: React.FC = () => {
             }
         }
 
-        // Process pending ICE candidates
         if (pendingIceCandidatesRef.current.length > 0) {
             console.log('🔄 Processing pending ICE candidates after WebRTC ready:', pendingIceCandidatesRef.current.length);
             const candidatesToProcess = [...pendingIceCandidatesRef.current];
@@ -561,6 +558,8 @@ const MeetingPage: React.FC = () => {
                 if (isConnected && user) {
                     joinMeeting(meetingId);
                 }
+                // ✅ Force camera to show
+                console.log('📷 Setting showCamera to TRUE');
                 setShowCamera(true);
             } else {
                 toast.error(response.data.message || 'Failed to join meeting');
@@ -574,8 +573,9 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleStreamReady = (stream: MediaStream) => {
-        console.log('📷 handleStreamReady called');
+        console.log('📷 handleStreamReady called with stream:', stream);
         localStreamRef.current = stream;
+        cameraStartedRef.current = true;
         toast.success('Camera is ready!');
 
         if (!webRTCServiceRef.current) {
@@ -584,8 +584,6 @@ const MeetingPage: React.FC = () => {
             setupWebRTCListeners();
             isWebRTCReadyRef.current = true;
             webRTCServiceRef.current.setLocalStream(stream);
-
-            // ✅ Process any pending messages now that WebRTC is ready
             processPendingMessages();
         }
     };
@@ -842,6 +840,7 @@ const MeetingPage: React.FC = () => {
                             <p>Remote Desc Set: <span className="font-bold">{isRemoteDescriptionSetRef.current ? '✅' : '❌'}</span></p>
                             <p>WebRTC Ready: <span className="font-bold">{isWebRTCReadyRef.current ? '✅' : '❌'}</span></p>
                             <p>Pending Messages: <span className="font-bold">{pendingMessagesRef.current.length}</span></p>
+                            <p>Camera Started: <span className="font-bold">{cameraStartedRef.current ? '✅' : '❌'}</span></p>
                         </div>
                     </div>
                 </div>
