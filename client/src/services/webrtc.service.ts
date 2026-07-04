@@ -21,6 +21,17 @@ export class WebRTCService {
                         'stun:stun3.l.google.com:19302',
                         'stun:stun4.l.google.com:19302',
                     ]
+                },
+                // Add TURN servers (you need to sign up for a free TURN server)
+                // For testing, use these free TURN servers:
+                {
+                    urls: [
+                        'turn:openrelay.metered.ca:80',
+                        'turn:openrelay.metered.ca:443',
+                        'turn:openrelay.metered.ca:3478',
+                    ],
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
                 }
             ],
             iceCandidatePoolSize: 10,
@@ -86,7 +97,7 @@ export class WebRTCService {
         // Remove existing senders first to avoid "track already set" error
         const senders = this.peerConnection.getSenders();
         console.log('🎥 Existing senders:', senders.length);
-        
+
         senders.forEach(sender => {
             try {
                 this.peerConnection?.removeTrack(sender);

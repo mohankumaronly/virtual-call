@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate }  from 'react-router-dom';
 import api from '../../../api/axios';
 import { useWebSocket } from '../../../contexts/WebSocketContext';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -106,12 +106,30 @@ const MeetingPage: React.FC = () => {
         } else if (message.type === 'OFFER') {
             console.log('📩 Received OFFER from:', message.username);
             hasReceivedOfferRef.current = true;
+            // ✅ Check if we're already processing an offer
+            if (isProcessingOfferRef.current) {
+                console.log('⏳ Currently processing an offer, queueing OFFER');
+                pendingMessagesRef.current.push({ type: 'OFFER', message });
+                return;
+            }
             handleOffer(message);
         } else if (message.type === 'ANSWER') {
             console.log('📩 Received ANSWER from:', message.username);
+            // ✅ Check if we're in the middle of processing an offer
+            if (isProcessingOfferRef.current) {
+                console.log('⏳ Currently processing an offer, queueing ANSWER');
+                pendingMessagesRef.current.push({ type: 'ANSWER', message });
+                return;
+            }
             handleAnswer(message);
         } else if (message.type === 'ICE_CANDIDATE') {
             console.log('📩 Received ICE_CANDIDATE from:', message.username);
+            // ✅ Check if we're in the middle of processing an offer
+            if (isProcessingOfferRef.current) {
+                console.log('⏳ Currently processing an offer, queueing ICE_CANDIDATE');
+                pendingMessagesRef.current.push({ type: 'ICE_CANDIDATE', message });
+                return;
+            }
             handleIceCandidate(message);
         } else if (message.type === 'SIGNAL') {
             console.log('📩 Received SIGNAL from:', message.username);
@@ -121,6 +139,13 @@ const MeetingPage: React.FC = () => {
 
             const payload = message.payload;
             if (payload && payload.type) {
+                // ✅ Check if we're processing an offer before handling
+                if (isProcessingOfferRef.current) {
+                    console.log('⏳ Currently processing an offer, queueing SIGNAL:', payload.type);
+                    pendingMessagesRef.current.push({ type: 'SIGNAL', message, payloadType: payload.type });
+                    return;
+                }
+
                 if (payload.type === 'OFFER') {
                     console.log('📩 Extracted OFFER from SIGNAL');
                     hasReceivedOfferRef.current = true;
@@ -216,16 +241,21 @@ const MeetingPage: React.FC = () => {
                 }
             }
 
-            // Process any pending messages (ANSWER, ICE_CANDIDATE that arrived early)
+            // Process any pending messages that arrived during offer processing
             if (pendingMessagesRef.current.length > 0) {
-                console.log('🔄 Processing pending messages:', pendingMessagesRef.current.length);
+                console.log('🔄 Processing pending messages after offer complete:', pendingMessagesRef.current.length);
                 const messagesToProcess = [...pendingMessagesRef.current];
                 pendingMessagesRef.current = [];
                 for (const pending of messagesToProcess) {
-                    if (pending.type === 'ANSWER') {
-                        await handleAnswer(pending.message);
-                    } else if (pending.type === 'ICE_CANDIDATE') {
-                        await handleIceCandidate(pending.message);
+                    if (pending.type === 'ANSWER' || pending.payloadType === 'ANSWER') {
+                        console.log('📩 Processing queued ANSWER');
+                        await handleAnswer(pending.message || pending);
+                    } else if (pending.type === 'ICE_CANDIDATE' || pending.payloadType === 'ICE_CANDIDATE') {
+                        console.log('📩 Processing queued ICE_CANDIDATE');
+                        await handleIceCandidate(pending.message || pending);
+                    } else if (pending.type === 'OFFER' || pending.payloadType === 'OFFER') {
+                        console.log('📩 Processing queued OFFER');
+                        await handleOffer(pending.message || pending);
                     }
                 }
             }
@@ -443,12 +473,15 @@ const MeetingPage: React.FC = () => {
             const messagesToProcess = [...pendingMessagesRef.current];
             pendingMessagesRef.current = [];
             for (const pending of messagesToProcess) {
-                if (pending.type === 'ANSWER') {
+                if (pending.type === 'ANSWER' || pending.payloadType === 'ANSWER') {
                     console.log('📩 Processing queued ANSWER');
-                    await handleAnswer(pending.message);
-                } else if (pending.type === 'ICE_CANDIDATE') {
+                    await handleAnswer(pending.message || pending);
+                } else if (pending.type === 'ICE_CANDIDATE' || pending.payloadType === 'ICE_CANDIDATE') {
                     console.log('📩 Processing queued ICE_CANDIDATE');
-                    await handleIceCandidate(pending.message);
+                    await handleIceCandidate(pending.message || pending);
+                } else if (pending.type === 'OFFER' || pending.payloadType === 'OFFER') {
+                    console.log('📩 Processing queued OFFER');
+                    await handleOffer(pending.message || pending);
                 }
             }
         }
