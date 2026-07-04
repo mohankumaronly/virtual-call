@@ -92,8 +92,9 @@ const MeetingPage: React.FC = () => {
 
             if (isCreatorRef.current && hasJoinedRef.current && !isCallInProgress && !hasInitiatedCallRef.current && !isJoiningUserCreator) {
                 console.log('📞 Creator initiating call with new participant');
-                hasInitiatedCallRef.current = true;
-                isCallInitiatedRef.current = true;
+                // ✅ DON'T set flags here - let initiateCallWithParticipant handle it
+                // hasInitiatedCallRef.current = true;  ← REMOVED
+                // isCallInitiatedRef.current = true;   ← REMOVED
                 initiateCallWithParticipant(message.userId);
             }
         } else if (message.type === 'USER_LEFT') {
@@ -401,6 +402,7 @@ const MeetingPage: React.FC = () => {
         console.log('📞 targetUserId:', targetUserId);
         console.log('📞 localStream exists?', !!localStreamRef.current);
 
+        // ✅ Check if call is already in progress
         if (isCallInProgress) {
             console.log('Call already in progress');
             return;
@@ -411,7 +413,9 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
+        // ✅ Set flags HERE after all checks pass
         isCallInitiatedRef.current = true;
+        hasInitiatedCallRef.current = true;
         setIsCallInProgress(true);
 
         if (!webRTCServiceRef.current) {
