@@ -428,6 +428,41 @@ const MeetingPage: React.FC = () => {
         }
     };
 
+    const processPendingMessages = async () => {
+        // ✅ Process any pending messages now that WebRTC is ready
+        if (pendingMessagesRef.current.length > 0) {
+            console.log('🔄 Processing pending messages after WebRTC ready:', pendingMessagesRef.current.length);
+            const messagesToProcess = [...pendingMessagesRef.current];
+            pendingMessagesRef.current = [];
+            for (const pending of messagesToProcess) {
+                if (pending.type === 'ANSWER') {
+                    console.log('📩 Processing queued ANSWER');
+                    await handleAnswer(pending.message);
+                } else if (pending.type === 'ICE_CANDIDATE') {
+                    console.log('📩 Processing queued ICE_CANDIDATE');
+                    await handleIceCandidate(pending.message);
+                }
+            }
+        }
+        
+        // Process pending ICE candidates
+        if (pendingIceCandidatesRef.current.length > 0) {
+            console.log('🔄 Processing pending ICE candidates after WebRTC ready:', pendingIceCandidatesRef.current.length);
+            const candidatesToProcess = [...pendingIceCandidatesRef.current];
+            pendingIceCandidatesRef.current = [];
+            for (const candidate of candidatesToProcess) {
+                try {
+                    if (webRTCServiceRef.current) {
+                        await webRTCServiceRef.current.addIceCandidate(candidate);
+                        console.log('✅ Pending ICE candidate added');
+                    }
+                } catch (e) {
+                    console.error('❌ Error adding pending ICE candidate:', e);
+                }
+            }
+        }
+    };
+
     const fetchMeeting = async () => {
         setIsLoading(true);
         try {
@@ -503,10 +538,14 @@ const MeetingPage: React.FC = () => {
         toast.success('Camera is ready!');
 
         if (!webRTCServiceRef.current) {
+            console.log('📷 Creating WebRTC service');
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
             isWebRTCReadyRef.current = true;
             webRTCServiceRef.current.setLocalStream(stream);
+            
+            // ✅ Process any pending messages now that WebRTC is ready
+            processPendingMessages();
         }
     };
 
@@ -761,6 +800,7 @@ const MeetingPage: React.FC = () => {
                             <p>Received Offer: <span className="font-bold">{hasReceivedOfferRef.current ? '✅' : '❌'}</span></p>
                             <p>Remote Desc Set: <span className="font-bold">{isRemoteDescriptionSetRef.current ? '✅' : '❌'}</span></p>
                             <p>WebRTC Ready: <span className="font-bold">{isWebRTCReadyRef.current ? '✅' : '❌'}</span></p>
+                            <p>Pending Messages: <span className="font-bold">{pendingMessagesRef.current.length}</span></p>
                         </div>
                     </div>
                 </div>
