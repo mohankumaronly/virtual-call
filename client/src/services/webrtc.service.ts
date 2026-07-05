@@ -9,6 +9,7 @@ export class WebRTCService {
     private onConnectionStateChangeCallback: ((state: RTCPeerConnectionState) => void) | null = null;
     private onIceCandidateCallback: ((candidate: RTCIceCandidate | null) => void) | null = null;
     private onIceConnectionStateChangeCallback: ((state: RTCIceConnectionState) => void) | null = null;
+    private onTrackCallback: ((track: MediaStreamTrack, stream: MediaStream) => void) | null = null;
 
     constructor() {
         const defaultConfig: RTCConfiguration = {
@@ -22,8 +23,7 @@ export class WebRTCService {
                         'stun:stun4.l.google.com:19302',
                     ]
                 },
-                // Add TURN servers (you need to sign up for a free TURN server)
-                // For testing, use these free TURN servers:
+                // TURN servers for NAT traversal
                 {
                     urls: [
                         'turn:openrelay.metered.ca:80',
@@ -37,7 +37,7 @@ export class WebRTCService {
             iceCandidatePoolSize: 10,
         };
 
-        console.log('🎥 Creating WebRTCService');
+        console.log('🎥 Creating WebRTCService with TURN servers');
         this.peerConnection = new RTCPeerConnection(defaultConfig);
         this.setupPeerConnectionListeners();
     }
@@ -48,9 +48,22 @@ export class WebRTCService {
         // ✅ Handle remote tracks (video/audio)
         this.peerConnection.ontrack = (event) => {
             console.log('🎥 Remote track received:', event.track.kind);
-            this.remoteStream = event.streams[0];
-            if (this.onRemoteStreamCallback) {
-                this.onRemoteStreamCallback(event.streams[0]);
+            console.log('🎥 Remote track ID:', event.track.id);
+            console.log('🎥 Remote streams:', event.streams.length);
+            
+            if (event.streams.length > 0) {
+                this.remoteStream = event.streams[0];
+                console.log('🎥 Remote stream ID:', this.remoteStream.id);
+                console.log('🎥 Remote stream tracks:', this.remoteStream.getTracks().length);
+                
+                if (this.onRemoteStreamCallback) {
+                    this.onRemoteStreamCallback(event.streams[0]);
+                }
+                if (this.onTrackCallback) {
+                    this.onTrackCallback(event.track, event.streams[0]);
+                }
+            } else {
+                console.warn('⚠️ No streams in ontrack event');
             }
         };
 
@@ -66,7 +79,6 @@ export class WebRTCService {
         // ✅ Handle ICE candidates - send ALL candidates including null
         this.peerConnection.onicecandidate = (event) => {
             if (this.onIceCandidateCallback) {
-                // Send the candidate (or null for gathering complete)
                 console.log('🎥 ICE candidate event:', event.candidate ? 'candidate' : 'gathering complete');
                 this.onIceCandidateCallback(event.candidate);
             }
@@ -85,10 +97,18 @@ export class WebRTCService {
         this.peerConnection.onnegotiationneeded = () => {
             console.log('🎥 Negotiation needed');
         };
+
+        // ✅ Handle signaling state changes
+        this.peerConnection.onsignalingstatechange = () => {
+            const state = this.peerConnection?.signalingState || 'stable';
+            console.log('🎥 Signaling state changed:', state);
+        };
     }
 
     public setLocalStream(stream: MediaStream): void {
         console.log('🎥 setLocalStream called');
+        console.log('🎥 Stream tracks:', stream.getTracks().length);
+        
         if (!this.peerConnection) {
             console.error('🎥 Peer connection is null');
             return;
@@ -116,6 +136,8 @@ export class WebRTCService {
                 console.error('🎥 Error adding track:', e);
             }
         });
+        
+        console.log('🎥 Local stream set successfully');
     }
 
     public onRemoteStream(callback: (stream: MediaStream) => void): void {
@@ -134,18 +156,23 @@ export class WebRTCService {
         this.onIceConnectionStateChangeCallback = callback;
     }
 
+    public onTrack(callback: (track: MediaStreamTrack, stream: MediaStream) => void): void {
+        this.onTrackCallback = callback;
+    }
+
     public async createOffer(): Promise<RTCSessionDescriptionInit> {
         if (!this.peerConnection) {
             throw new Error('Peer connection not initialized');
         }
 
         try {
+            console.log('📞 Creating offer...');
             const offer = await this.peerConnection.createOffer({
                 offerToReceiveAudio: true,
                 offerToReceiveVideo: true,
             });
             await this.peerConnection.setLocalDescription(offer);
-            console.log('🎥 Offer created');
+            console.log('🎥 Offer created and set as local description');
             return offer;
         } catch (error) {
             console.error('🎥 Failed to create offer:', error);
@@ -159,12 +186,13 @@ export class WebRTCService {
         }
 
         try {
+            console.log('📞 Creating answer...');
             const answer = await this.peerConnection.createAnswer({
                 offerToReceiveAudio: true,
                 offerToReceiveVideo: true,
             });
             await this.peerConnection.setLocalDescription(answer);
-            console.log('🎥 Answer created');
+            console.log('🎥 Answer created and set as local description');
             return answer;
         } catch (error) {
             console.error('🎥 Failed to create answer:', error);
@@ -178,8 +206,9 @@ export class WebRTCService {
         }
 
         try {
+            console.log('📡 Setting remote description, type:', description.type);
             await this.peerConnection.setRemoteDescription(description);
-            console.log('🎥 Remote description set');
+            console.log('🎥 Remote description set successfully');
         } catch (error) {
             console.error('🎥 Failed to set remote description:', error);
             throw error;
@@ -193,7 +222,7 @@ export class WebRTCService {
 
         try {
             await this.peerConnection.addIceCandidate(candidate);
-            console.log('🎥 ICE candidate added');
+            console.log('🎥 ICE candidate added successfully');
         } catch (error) {
             console.error('🎥 Failed to add ICE candidate:', error);
             throw error;
@@ -216,6 +245,10 @@ export class WebRTCService {
         return this.peerConnection?.iceConnectionState || 'disconnected';
     }
 
+    public getSignalingState(): RTCSignalingState {
+        return this.peerConnection?.signalingState || 'stable';
+    }
+
     public close(): void {
         console.log('🎥 Closing WebRTC connection');
         if (this.peerConnection) {
@@ -223,6 +256,7 @@ export class WebRTCService {
             this.peerConnection = null;
         }
         this.remoteStream = null;
+        console.log('🎥 WebRTC connection closed');
     }
 
     public isConnected(): boolean {

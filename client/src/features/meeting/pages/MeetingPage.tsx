@@ -68,6 +68,23 @@ const MeetingPage: React.FC = () => {
         };
     }, [meetingId, isConnected]);
 
+    // ✅ Effect to handle remoteStream changes
+    useEffect(() => {
+        if (remoteStream && remoteVideoRef.current) {
+            console.log('🎥 Setting remote stream to video element');
+            remoteVideoRef.current.srcObject = remoteStream;
+            remoteVideoRef.current.onloadedmetadata = () => {
+                console.log('🎥 Remote video metadata loaded');
+                remoteVideoRef.current?.play().catch(error => {
+                    console.error('Error playing remote video:', error);
+                });
+            };
+            remoteVideoRef.current.play().catch(error => {
+                console.error('Error playing remote video:', error);
+            });
+        }
+    }, [remoteStream]);
+
     const handleWebSocketMessage = (message: any) => {
         console.log('📩 WebSocket message:', message.type, 'from:', message.username);
 
@@ -255,15 +272,10 @@ const MeetingPage: React.FC = () => {
         // Remote stream
         webRTCServiceRef.current.onRemoteStream((stream) => {
             console.log('🎥 Remote stream received!');
+            console.log('🎥 Remote stream tracks:', stream.getTracks());
             setRemoteStream(stream);
             setIsCallActive(true);
             setConnectionState('connected');
-            if (remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = stream;
-                remoteVideoRef.current.play().catch(error => {
-                    console.error('Error playing remote video:', error);
-                });
-            }
         });
 
         // Connection state
