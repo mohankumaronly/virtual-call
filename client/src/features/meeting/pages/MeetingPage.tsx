@@ -93,7 +93,7 @@ const MeetingPage: React.FC = () => {
             fetchParticipants();
 
             const isJoiningUserCreator = message.userId === user?.id;
-            
+
             // ✅ Auto-start call when second user joins (only if creator and not already in call)
             if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current) {
                 console.log('📞 Creator starting call');
@@ -167,19 +167,25 @@ const MeetingPage: React.FC = () => {
             }
 
             // Set remote description (offer)
+            console.log('📡 Setting remote description...');
             await webRTCServiceRef.current.setRemoteDescription(offer);
             console.log('✅ Remote description set');
 
             // Create and send answer
+            console.log('📞 Creating answer...');
             const answer = await webRTCServiceRef.current.createAnswer();
-            console.log('✅ Answer created');
+            console.log('✅ Answer created successfully');
 
-            // Send answer via WebSocket
+            // ✅ Send answer via WebSocket
+            console.log('📤 Sending answer...');
             sendSignal(meetingId!, {
                 type: 'ANSWER',
                 payload: answer
             });
-            console.log('📤 Answer sent');
+            console.log('📤 Answer sent successfully');
+
+            // Process any pending ICE candidates
+            // (If you have a pendingIceCandidatesRef)
 
             toast.success('Connected to peer!');
         } catch (error) {
