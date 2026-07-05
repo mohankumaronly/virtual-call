@@ -6,7 +6,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import type { ApiResponse, MeetingResponse } from '../../../types';
 import toast from 'react-hot-toast';
 import CameraPreview from '../components/CameraPreview';
-import { SimplePeerService } from '../../../services/SimplePeerService';
+import { WebRTCService } from '../../../services/webrtc.service';
 
 interface Participant {
     userId: number;
@@ -23,7 +23,7 @@ const MeetingPage: React.FC = () => {
     const [participants, setParticipants] = useState<Participant[]>([]);
     const [showCamera, setShowCamera] = useState(false);
     const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-    const [peerState, setPeerState] = useState<string>('disconnected');
+    const [connectionState, setConnectionState] = useState<string>('disconnected');
     const [isCallActive, setIsCallActive] = useState(false);
     const [isInitiator, setIsInitiator] = useState(false);
 
@@ -31,13 +31,14 @@ const MeetingPage: React.FC = () => {
     const { isConnected, joinMeeting, leaveMeeting, subscribeToMeeting, unsubscribeFromMeeting, sendSignal } = useWebSocket();
     const navigate = useNavigate();
 
-    const peerServiceRef = useRef<SimplePeerService | null>(null);
+    // Refs
+    const webRTCServiceRef = useRef<WebRTCService | null>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const hasJoinedRef = useRef<boolean>(false);
     const localStreamRef = useRef<MediaStream | null>(null);
     const isCreatorRef = useRef<boolean>(false);
     const callInitiatedRef = useRef<boolean>(false);
-    const initiatorRef = useRef<boolean>(false);
+    const isProcessingOfferRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!meetingId) {
@@ -61,143 +62,202 @@ const MeetingPage: React.FC = () => {
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach(track => track.stop());
             }
-            if (peerServiceRef.current) {
-                peerServiceRef.current.destroy();
+            if (webRTCServiceRef.current) {
+                webRTCServiceRef.current.close();
             }
         };
     }, [meetingId, isConnected]);
 
     const handleWebSocketMessage = (message: any) => {
-        console.log('📩 WebSocket message received:', message.type, 'from:', message.username);
+        console.log('📩 WebSocket message:', message.type, 'from:', message.username);
 
         if (message.type === 'USER_JOINED') {
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
 
             const isJoiningUserCreator = message.userId === user?.id;
-            console.log('🔍 isJoiningUserCreator:', isJoiningUserCreator);
-
-            // ✅ Auto-start call when second user joins (only if creator)
+            
+            // ✅ Auto-start call when second user joins (only if creator and not already in call)
             if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current) {
-                console.log('📞 Creator initiating call with new participant');
+                console.log('📞 Creator starting call');
                 callInitiatedRef.current = true;
-                // Wait for camera to be ready
                 setTimeout(() => {
-                    initiateCallWithPeer();
+                    startCallAsInitiator();
                 }, 2000);
             }
         } else if (message.type === 'USER_LEFT') {
             toast(`${message.username} left the meeting`, { icon: '👋' });
             fetchParticipants();
             setIsCallActive(false);
-            setPeerState('disconnected');
+            setConnectionState('disconnected');
             setRemoteStream(null);
             callInitiatedRef.current = false;
-            if (peerServiceRef.current) {
-                peerServiceRef.current.destroy();
-                peerServiceRef.current = null;
+            if (webRTCServiceRef.current) {
+                webRTCServiceRef.current.close();
+                webRTCServiceRef.current = null;
             }
-        } else if (message.type === 'WEBRTC_SIGNAL') {
-            console.log('📩 Received WebRTC signal from:', message.username);
-            if (peerServiceRef.current) {
-                peerServiceRef.current.signal(message.payload);
+        } else if (message.type === 'OFFER') {
+            console.log('📩 Received OFFER');
+            handleOffer(message.payload);
+        } else if (message.type === 'ANSWER') {
+            console.log('📩 Received ANSWER');
+            handleAnswer(message.payload);
+        } else if (message.type === 'ICE_CANDIDATE') {
+            console.log('📩 Received ICE_CANDIDATE');
+            handleIceCandidate(message.payload);
+        } else if (message.type === 'SIGNAL') {
+            // Handle SIGNAL wrapper
+            const payload = message.payload;
+            if (payload) {
+                if (payload.type === 'OFFER') {
+                    console.log('📩 Extracted OFFER from SIGNAL');
+                    handleOffer(payload.payload || payload);
+                } else if (payload.type === 'ANSWER') {
+                    console.log('📩 Extracted ANSWER from SIGNAL');
+                    handleAnswer(payload.payload || payload);
+                } else if (payload.type === 'ICE_CANDIDATE') {
+                    console.log('📩 Extracted ICE_CANDIDATE from SIGNAL');
+                    handleIceCandidate(payload.payload || payload);
+                }
             }
         }
     };
 
-    const initiateCallWithPeer = () => {
+    // ✅ Handle incoming OFFER
+    const handleOffer = async (offer: RTCSessionDescriptionInit) => {
+        if (isProcessingOfferRef.current) {
+            console.log('Already processing an offer');
+            return;
+        }
+
+        console.log('📩 Processing offer');
+        isProcessingOfferRef.current = true;
+
+        try {
+            // Check if we already have a connection
+            if (webRTCServiceRef.current) {
+                webRTCServiceRef.current.close();
+                webRTCServiceRef.current = null;
+            }
+
+            // Create new WebRTC service as non-initiator
+            webRTCServiceRef.current = new WebRTCService();
+            setupWebRTCListeners();
+
+            // Add local stream if available
+            if (localStreamRef.current) {
+                webRTCServiceRef.current.setLocalStream(localStreamRef.current);
+            }
+
+            // Set remote description (offer)
+            await webRTCServiceRef.current.setRemoteDescription(offer);
+            console.log('✅ Remote description set');
+
+            // Create and send answer
+            const answer = await webRTCServiceRef.current.createAnswer();
+            console.log('✅ Answer created');
+
+            // Send answer via WebSocket
+            sendSignal(meetingId!, {
+                type: 'ANSWER',
+                payload: answer
+            });
+            console.log('📤 Answer sent');
+
+            toast.success('Connected to peer!');
+        } catch (error) {
+            console.error('❌ Error handling offer:', error);
+            toast.error('Failed to connect');
+        } finally {
+            isProcessingOfferRef.current = false;
+        }
+    };
+
+    // ✅ Handle incoming ANSWER
+    const handleAnswer = async (answer: RTCSessionDescriptionInit) => {
+        if (!webRTCServiceRef.current) {
+            console.warn('No WebRTC service for answer');
+            return;
+        }
+
+        try {
+            await webRTCServiceRef.current.setRemoteDescription(answer);
+            console.log('✅ Remote answer set');
+            toast.success('Call connected!');
+        } catch (error) {
+            console.error('❌ Error handling answer:', error);
+            toast.error('Failed to set answer');
+        }
+    };
+
+    // ✅ Handle incoming ICE CANDIDATE
+    const handleIceCandidate = async (candidate: RTCIceCandidate) => {
+        if (!webRTCServiceRef.current) {
+            console.warn('No WebRTC service for ICE candidate');
+            return;
+        }
+
+        try {
+            await webRTCServiceRef.current.addIceCandidate(candidate);
+            console.log('✅ ICE candidate added');
+        } catch (error) {
+            console.error('❌ Error adding ICE candidate:', error);
+        }
+    };
+
+    // ✅ Start call as initiator (creator)
+    const startCallAsInitiator = async () => {
         if (!localStreamRef.current) {
-            console.error('❌ Local stream not available');
+            console.error('❌ No local stream');
             toast.error('Camera not ready');
             return;
         }
 
-        console.log('📞 Initiating call as initiator');
-        initiatorRef.current = true;
+        console.log('📞 Starting call as initiator');
         setIsInitiator(true);
 
-        // ✅ Create peer as initiator
-        if (peerServiceRef.current) {
-            peerServiceRef.current.destroy();
-            peerServiceRef.current = null;
+        // Create WebRTC service as initiator
+        if (webRTCServiceRef.current) {
+            webRTCServiceRef.current.close();
+            webRTCServiceRef.current = null;
         }
 
-        peerServiceRef.current = new SimplePeerService(true);
-        
-        // Set local stream
-        peerServiceRef.current.setLocalStream(localStreamRef.current);
+        webRTCServiceRef.current = new WebRTCService();
+        setupWebRTCListeners();
 
-        // Handle remote stream
-        peerServiceRef.current.onRemoteStream((stream) => {
-            console.log('🎥 Remote stream received!');
-            setRemoteStream(stream);
-            setIsCallActive(true);
-            setPeerState('connected');
-            if (remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = stream;
-                remoteVideoRef.current.play().catch(error => {
-                    console.error('Error playing remote video:', error);
-                });
-            }
-        });
+        // Add local stream
+        webRTCServiceRef.current.setLocalStream(localStreamRef.current);
 
-        // Handle connection state
-        peerServiceRef.current.onConnectionStateChange((state) => {
-            console.log('🔗 Peer state changed:', state);
-            setPeerState(state);
-            if (state === 'connected') {
-                setIsCallActive(true);
-                toast.success('Call connected!');
-            } else if (state === 'disconnected' || state === 'error') {
-                setIsCallActive(false);
-                setRemoteStream(null);
-                callInitiatedRef.current = false;
-                toast.error('Call disconnected');
-            }
-        });
+        try {
+            // Create offer
+            const offer = await webRTCServiceRef.current.createOffer();
+            console.log('✅ Offer created');
 
-        // Handle signals (offer/answer/ICE) to send via WebSocket
-        peerServiceRef.current.onSignal((signal) => {
-            console.log('📤 Sending signal via WebSocket:', signal.type);
+            // Send offer via WebSocket
             sendSignal(meetingId!, {
-                type: 'WEBRTC_SIGNAL',
-                payload: signal
+                type: 'OFFER',
+                payload: offer
             });
-        });
+            console.log('📤 Offer sent');
+
+            toast('Calling participant...', { icon: '📞' });
+        } catch (error) {
+            console.error('❌ Error creating offer:', error);
+            toast.error('Failed to start call');
+            callInitiatedRef.current = false;
+        }
     };
 
-    const handleIncomingCall = () => {
-        if (!localStreamRef.current) {
-            console.error('❌ Local stream not available');
-            toast.error('Camera not ready');
-            return;
-        }
+    // ✅ Setup WebRTC listeners
+    const setupWebRTCListeners = () => {
+        if (!webRTCServiceRef.current) return;
 
-        if (callInitiatedRef.current || isCallActive) {
-            console.log('Call already in progress');
-            return;
-        }
-
-        console.log('📞 Responding to incoming call as receiver');
-        callInitiatedRef.current = true;
-
-        // ✅ Create peer as receiver (non-initiator)
-        if (peerServiceRef.current) {
-            peerServiceRef.current.destroy();
-            peerServiceRef.current = null;
-        }
-
-        peerServiceRef.current = new SimplePeerService(false);
-        
-        // Set local stream
-        peerServiceRef.current.setLocalStream(localStreamRef.current);
-
-        // Handle remote stream
-        peerServiceRef.current.onRemoteStream((stream) => {
+        // Remote stream
+        webRTCServiceRef.current.onRemoteStream((stream) => {
             console.log('🎥 Remote stream received!');
             setRemoteStream(stream);
             setIsCallActive(true);
-            setPeerState('connected');
+            setConnectionState('connected');
             if (remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = stream;
                 remoteVideoRef.current.play().catch(error => {
@@ -206,14 +266,14 @@ const MeetingPage: React.FC = () => {
             }
         });
 
-        // Handle connection state
-        peerServiceRef.current.onConnectionStateChange((state) => {
-            console.log('🔗 Peer state changed:', state);
-            setPeerState(state);
+        // Connection state
+        webRTCServiceRef.current.onConnectionStateChange((state) => {
+            console.log('🔗 Connection state:', state);
+            setConnectionState(state);
             if (state === 'connected') {
                 setIsCallActive(true);
-                toast.success('Call connected!');
-            } else if (state === 'disconnected' || state === 'error') {
+                toast.success('Call established!');
+            } else if (state === 'disconnected' || state === 'failed') {
                 setIsCallActive(false);
                 setRemoteStream(null);
                 callInitiatedRef.current = false;
@@ -221,13 +281,17 @@ const MeetingPage: React.FC = () => {
             }
         });
 
-        // Handle signals (offer/answer/ICE) to send via WebSocket
-        peerServiceRef.current.onSignal((signal) => {
-            console.log('📤 Sending signal via WebSocket:', signal.type);
-            sendSignal(meetingId!, {
-                type: 'WEBRTC_SIGNAL',
-                payload: signal
-            });
+        // ICE candidates
+        webRTCServiceRef.current.onIceCandidate((candidate) => {
+            if (candidate) {
+                console.log('🧊 Sending ICE candidate');
+                sendSignal(meetingId!, {
+                    type: 'ICE_CANDIDATE',
+                    payload: candidate
+                });
+            } else {
+                console.log('🧊 ICE gathering complete');
+            }
         });
     };
 
@@ -238,11 +302,7 @@ const MeetingPage: React.FC = () => {
             if (response.data.success && response.data.data) {
                 setMeeting(response.data.data);
                 isCreatorRef.current = response.data.data.createdBy === user?.id;
-                console.log('👑 ========================================');
-                console.log('👑 Meeting fetched - isCreatorRef:', isCreatorRef.current);
-                console.log('👑 Meeting created by:', response.data.data.createdBy);
-                console.log('👑 Current user:', user?.id);
-                console.log('👑 ========================================');
+                console.log('👑 isCreatorRef:', isCreatorRef.current);
             } else {
                 toast.error(response.data.message || 'Meeting not found');
                 navigate('/dashboard');
@@ -301,14 +361,9 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleStreamReady = (stream: MediaStream) => {
-        console.log('📷 handleStreamReady called');
+        console.log('📷 Camera ready');
         localStreamRef.current = stream;
         toast.success('Camera is ready!');
-
-        // If we're not the creator and the call was already initiated, handle incoming call
-        if (!isCreatorRef.current && callInitiatedRef.current) {
-            handleIncomingCall();
-        }
     };
 
     const handleStreamError = (error: Error) => {
@@ -331,9 +386,9 @@ const MeetingPage: React.FC = () => {
             const response = await api.post<ApiResponse>(`/api/meetings/${meetingId}/end`);
             if (response.data.success) {
                 toast.success(response.data.message);
-                if (peerServiceRef.current) {
-                    peerServiceRef.current.destroy();
-                    peerServiceRef.current = null;
+                if (webRTCServiceRef.current) {
+                    webRTCServiceRef.current.close();
+                    webRTCServiceRef.current = null;
                 }
                 setIsCallActive(false);
                 setRemoteStream(null);
@@ -368,13 +423,8 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
-        // Tell the other participant to prepare for incoming call
-        sendSignal(meetingId!, {
-            type: 'INCOMING_CALL'
-        });
-
         callInitiatedRef.current = true;
-        await initiateCallWithPeer();
+        await startCallAsInitiator();
     };
 
     if (isLoading) {
@@ -454,7 +504,7 @@ const MeetingPage: React.FC = () => {
                                                 {isCallActive ? '📞 Connected' : '⏳ Waiting for connection...'}
                                             </p>
                                             <p className="text-xs text-gray-500 mt-1">
-                                                State: {peerState}
+                                                State: {connectionState}
                                             </p>
                                             {isInitiator && (
                                                 <p className="text-xs text-green-400 mt-1">🔵 Caller</p>
@@ -558,9 +608,9 @@ const MeetingPage: React.FC = () => {
                             <p>WebSocket: <span className="font-bold">{isConnected ? '✅' : '❌'}</span></p>
                             <p>Participants: <span className="font-bold">{participants.length}</span></p>
                             <p>Call: <span className="font-bold">{isCallActive ? '📞 Active' : '⏸️ Inactive'}</span></p>
-                            <p>Peer State: <span className="font-bold">{peerState}</span></p>
+                            <p>Connection: <span className="font-bold">{connectionState}</span></p>
                             <p>Role: <span className="font-bold">{isCreatorRef.current ? '👑 Creator' : '👤 Participant'}</span></p>
-                            <p>Caller: <span className="font-bold">{isInitiator ? '🔵 Yes' : '🔴 No'}</span></p>
+                            <p>Initiator: <span className="font-bold">{isInitiator ? '🔵 Yes' : '🔴 No'}</span></p>
                         </div>
                     </div>
                 </div>
