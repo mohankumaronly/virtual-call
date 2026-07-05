@@ -42,6 +42,7 @@ const MeetingPage: React.FC = () => {
     const isProcessingOfferRef = useRef<boolean>(false);
     const answerSentRef = useRef<boolean>(false);
     const subscriptionStableRef = useRef<boolean>(false);
+    const retryIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
         console.log('🔵 [LIFECYCLE] MeetingPage mounted, meetingId:', meetingId);
@@ -55,6 +56,10 @@ const MeetingPage: React.FC = () => {
 
         return () => {
             console.log('🔴 [LIFECYCLE] MeetingPage unmounting, cleaning up');
+            if (retryIntervalRef.current) {
+                clearInterval(retryIntervalRef.current);
+                retryIntervalRef.current = null;
+            }
             if (meetingId && isWebSocketStable) {
                 unsubscribeFromMeeting(meetingId);
                 setIsWebSocketStable(false);
@@ -78,8 +83,12 @@ const MeetingPage: React.FC = () => {
         if (isConnected && meetingId && !isWebSocketStable) {
             console.log('🔵 [WEBSOCKET] Subscribing to meeting:', meetingId);
             subscribeToMeeting(meetingId, handleWebSocketMessage);
-            setIsWebSocketStable(true);
-            subscriptionStableRef.current = true;
+            // Set stable after a short delay
+            setTimeout(() => {
+                setIsWebSocketStable(true);
+                subscriptionStableRef.current = true;
+                console.log('✅ [WEBSOCKET] Subscription stable');
+            }, 1500);
         }
     }, [isConnected, meetingId]);
 
@@ -126,11 +135,10 @@ const MeetingPage: React.FC = () => {
                 isWebSocketStable
             });
 
-            // ✅ Auto-start call when second user joins (only if creator and not already in call)
-            if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current) {
-                console.log('📞 [AUTO_START] Creator starting call');
+            // ✅ Only auto-start if WebSocket is stable
+            if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current && isWebSocketStable) {
+                console.log('📞 [AUTO_START] Creator starting call (WebSocket stable)');
                 callInitiatedRef.current = true;
-                // ✅ Wait longer for joiner to be fully ready
                 setTimeout(() => {
                     if (subscriptionStableRef.current) {
                         startCallAsInitiator();
@@ -140,7 +148,42 @@ const MeetingPage: React.FC = () => {
                             startCallAsInitiator();
                         }, 2000);
                     }
-                }, 3000);
+                }, 2000);
+            } else if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current && !isWebSocketStable) {
+                console.log('⏳ [AUTO_START] WebSocket not stable, scheduling retry...');
+                // Schedule a retry when WebSocket becomes stable
+                if (retryIntervalRef.current) {
+                    clearInterval(retryIntervalRef.current);
+                }
+                retryIntervalRef.current = setInterval(() => {
+                    if (isWebSocketStable && !callInitiatedRef.current) {
+                        console.log('📞 [AUTO_START] Retry starting call (WebSocket now stable)');
+                        if (retryIntervalRef.current) {
+                            clearInterval(retryIntervalRef.current);
+                            retryIntervalRef.current = null;
+                        }
+                        callInitiatedRef.current = true;
+                        startCallAsInitiator();
+                    } else if (callInitiatedRef.current) {
+                        if (retryIntervalRef.current) {
+                            clearInterval(retryIntervalRef.current);
+                            retryIntervalRef.current = null;
+                        }
+                    }
+                }, 1000);
+                
+                // Timeout after 10 seconds
+                setTimeout(() => {
+                    if (retryIntervalRef.current) {
+                        clearInterval(retryIntervalRef.current);
+                        retryIntervalRef.current = null;
+                    }
+                    if (!callInitiatedRef.current && isWebSocketStable) {
+                        console.log('📞 [AUTO_START] Final retry starting call');
+                        callInitiatedRef.current = true;
+                        startCallAsInitiator();
+                    }
+                }, 10000);
             }
         } else if (message.type === 'USER_LEFT') {
             console.log('👤 [WEBSOCKET] User left:', message.username);
@@ -150,6 +193,10 @@ const MeetingPage: React.FC = () => {
             setConnectionState('disconnected');
             setRemoteStream(null);
             callInitiatedRef.current = false;
+            if (retryIntervalRef.current) {
+                clearInterval(retryIntervalRef.current);
+                retryIntervalRef.current = null;
+            }
             if (webRTCServiceRef.current) {
                 webRTCServiceRef.current.close();
                 webRTCServiceRef.current = null;
@@ -564,6 +611,10 @@ const MeetingPage: React.FC = () => {
 
     const handleRetryCall = () => {
         console.log('🔄 [RETRY] Retrying call');
+        if (retryIntervalRef.current) {
+            clearInterval(retryIntervalRef.current);
+            retryIntervalRef.current = null;
+        }
         callInitiatedRef.current = false;
         setIsCallActive(false);
         setRemoteStream(null);
@@ -573,7 +624,12 @@ const MeetingPage: React.FC = () => {
             webRTCServiceRef.current = null;
         }
         setTimeout(() => {
-            startCallAsInitiator();
+            if (subscriptionStableRef.current) {
+                callInitiatedRef.current = true;
+                startCallAsInitiator();
+            } else {
+                toast.error('Connection not stable, please wait');
+            }
         }, 1000);
     };
 
