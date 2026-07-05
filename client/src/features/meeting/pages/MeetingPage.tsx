@@ -26,6 +26,7 @@ const MeetingPage: React.FC = () => {
     const [connectionState, setConnectionState] = useState<string>('disconnected');
     const [isCallActive, setIsCallActive] = useState(false);
     const [isInitiator, setIsInitiator] = useState(false);
+    const [isWebSocketStable, setIsWebSocketStable] = useState(false);
 
     const { user } = useAuth();
     const { isConnected, joinMeeting, leaveMeeting, subscribeToMeeting, unsubscribeFromMeeting, sendSignal } = useWebSocket();
@@ -40,6 +41,7 @@ const MeetingPage: React.FC = () => {
     const callInitiatedRef = useRef<boolean>(false);
     const isProcessingOfferRef = useRef<boolean>(false);
     const answerSentRef = useRef<boolean>(false);
+    const subscriptionStableRef = useRef<boolean>(false);
 
     useEffect(() => {
         console.log('🔵 [LIFECYCLE] MeetingPage mounted, meetingId:', meetingId);
@@ -47,18 +49,15 @@ const MeetingPage: React.FC = () => {
             navigate('/dashboard');
             return;
         }
+        
         fetchMeeting();
         fetchParticipants();
 
-        if (isConnected) {
-            console.log('🔵 [WEBSOCKET] Subscribing to meeting:', meetingId);
-            subscribeToMeeting(meetingId, handleWebSocketMessage);
-        }
-
         return () => {
             console.log('🔴 [LIFECYCLE] MeetingPage unmounting, cleaning up');
-            if (meetingId) {
+            if (meetingId && isWebSocketStable) {
                 unsubscribeFromMeeting(meetingId);
+                setIsWebSocketStable(false);
                 if (hasJoinedRef.current) {
                     leaveMeeting(meetingId);
                 }
@@ -72,7 +71,17 @@ const MeetingPage: React.FC = () => {
                 webRTCServiceRef.current.close();
             }
         };
-    }, [meetingId, isConnected]);
+    }, [meetingId]);
+
+    // ✅ Effect to handle WebSocket connection
+    useEffect(() => {
+        if (isConnected && meetingId && !isWebSocketStable) {
+            console.log('🔵 [WEBSOCKET] Subscribing to meeting:', meetingId);
+            subscribeToMeeting(meetingId, handleWebSocketMessage);
+            setIsWebSocketStable(true);
+            subscriptionStableRef.current = true;
+        }
+    }, [isConnected, meetingId]);
 
     // ✅ Effect to handle remoteStream changes
     useEffect(() => {
@@ -113,16 +122,25 @@ const MeetingPage: React.FC = () => {
                 hasJoined: hasJoinedRef.current,
                 isCallActive,
                 isJoiningUserCreator,
-                callInitiated: callInitiatedRef.current
+                callInitiated: callInitiatedRef.current,
+                isWebSocketStable
             });
 
             // ✅ Auto-start call when second user joins (only if creator and not already in call)
             if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current) {
                 console.log('📞 [AUTO_START] Creator starting call');
                 callInitiatedRef.current = true;
+                // ✅ Wait longer for joiner to be fully ready
                 setTimeout(() => {
-                    startCallAsInitiator();
-                }, 2000);
+                    if (subscriptionStableRef.current) {
+                        startCallAsInitiator();
+                    } else {
+                        console.warn('⚠️ [AUTO_START] Subscription not stable, retrying in 2s');
+                        setTimeout(() => {
+                            startCallAsInitiator();
+                        }, 2000);
+                    }
+                }, 3000);
             }
         } else if (message.type === 'USER_LEFT') {
             console.log('👤 [WEBSOCKET] User left:', message.username);
@@ -146,7 +164,6 @@ const MeetingPage: React.FC = () => {
             console.log('📩 [WEBSOCKET] Received ICE_CANDIDATE directly');
             handleIceCandidate(message.payload);
         } else if (message.type === 'SIGNAL') {
-            // Handle SIGNAL wrapper
             const payload = message.payload;
             console.log('📩 [WEBSOCKET] Received SIGNAL wrapper, payload type:', payload?.type);
             if (payload) {
@@ -163,8 +180,6 @@ const MeetingPage: React.FC = () => {
                     console.log('📩 [WEBSOCKET] Unknown payload type:', payload.type);
                 }
             }
-        } else {
-            console.log('📩 [WEBSOCKET] Unknown message type:', message.type);
         }
     };
 
@@ -184,7 +199,6 @@ const MeetingPage: React.FC = () => {
         answerSentRef.current = false;
 
         try {
-            // Check if we already have a connection
             if (webRTCServiceRef.current) {
                 console.log('🔴 [OFFER] Closing existing WebRTC connection');
                 webRTCServiceRef.current.close();
@@ -195,7 +209,6 @@ const MeetingPage: React.FC = () => {
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
 
-            // Add local stream if available
             if (localStreamRef.current) {
                 console.log('📷 [OFFER] Adding local stream to WebRTC service');
                 webRTCServiceRef.current.setLocalStream(localStreamRef.current);
@@ -203,20 +216,16 @@ const MeetingPage: React.FC = () => {
                 console.warn('⚠️ [OFFER] No local stream available');
             }
 
-            // Set remote description (offer)
             console.log('📡 [OFFER] Setting remote description...');
             await webRTCServiceRef.current.setRemoteDescription(offer);
             console.log('✅ [OFFER] Remote description set successfully');
 
-            // Create and send answer
             console.log('📞 [OFFER] Creating answer...');
             const answer = await webRTCServiceRef.current.createAnswer();
             console.log('✅ [OFFER] Answer created successfully');
             console.log('📞 [OFFER] Answer type:', answer.type);
 
-            // ✅ Send answer via WebSocket
             console.log('📤 [OFFER] Sending answer via WebSocket...');
-            console.log('📤 [OFFER] MeetingId:', meetingId);
             sendSignal(meetingId!, {
                 type: 'ANSWER',
                 payload: answer
@@ -227,11 +236,10 @@ const MeetingPage: React.FC = () => {
             toast.success('Connected to peer!');
         } catch (error) {
             console.error('❌ [OFFER] Error handling offer:', error);
-            console.error('❌ [OFFER] Error details:', error instanceof Error ? error.message : 'Unknown error');
             toast.error('Failed to connect: ' + (error instanceof Error ? error.message : 'Unknown error'));
         } finally {
             isProcessingOfferRef.current = false;
-            console.log('🔓 [OFFER] Offer processing complete, isProcessingOffer:', isProcessingOfferRef.current);
+            console.log('🔓 [OFFER] Offer processing complete');
         }
     };
 
@@ -281,6 +289,7 @@ const MeetingPage: React.FC = () => {
     const startCallAsInitiator = async () => {
         console.log('📞 [INITIATOR] startCallAsInitiator called');
         console.log('📞 [INITIATOR] Local stream exists:', !!localStreamRef.current);
+        console.log('📞 [INITIATOR] Subscription stable:', subscriptionStableRef.current);
 
         if (!localStreamRef.current) {
             console.error('❌ [INITIATOR] No local stream');
@@ -288,10 +297,19 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
+        if (!subscriptionStableRef.current) {
+            console.warn('⚠️ [INITIATOR] Subscription not stable, waiting...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            if (!subscriptionStableRef.current) {
+                console.error('❌ [INITIATOR] Subscription still not stable');
+                toast.error('Connection not stable, please try again');
+                return;
+            }
+        }
+
         console.log('📞 [INITIATOR] Starting call as initiator');
         setIsInitiator(true);
 
-        // Create WebRTC service as initiator
         if (webRTCServiceRef.current) {
             console.log('🔴 [INITIATOR] Closing existing WebRTC connection');
             webRTCServiceRef.current.close();
@@ -302,20 +320,16 @@ const MeetingPage: React.FC = () => {
         webRTCServiceRef.current = new WebRTCService();
         setupWebRTCListeners();
 
-        // Add local stream
         console.log('📷 [INITIATOR] Adding local stream');
         webRTCServiceRef.current.setLocalStream(localStreamRef.current);
 
         try {
-            // Create offer
             console.log('📞 [INITIATOR] Creating offer...');
             const offer = await webRTCServiceRef.current.createOffer();
             console.log('✅ [INITIATOR] Offer created successfully');
             console.log('📞 [INITIATOR] Offer type:', offer.type);
 
-            // Send offer via WebSocket
             console.log('📤 [INITIATOR] Sending offer via WebSocket...');
-            console.log('📤 [INITIATOR] MeetingId:', meetingId);
             sendSignal(meetingId!, {
                 type: 'OFFER',
                 payload: offer
@@ -325,7 +339,6 @@ const MeetingPage: React.FC = () => {
             toast('Calling participant...', { icon: '📞' });
         } catch (error) {
             console.error('❌ [INITIATOR] Error creating offer:', error);
-            console.error('❌ [INITIATOR] Error details:', error instanceof Error ? error.message : 'Unknown error');
             toast.error('Failed to start call');
             callInitiatedRef.current = false;
         }
@@ -339,7 +352,6 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
-        // Remote stream
         webRTCServiceRef.current.onRemoteStream((stream) => {
             console.log('🎥 [LISTENERS] Remote stream received!');
             console.log('🎥 [LISTENERS] Remote stream tracks:', stream.getTracks().length);
@@ -348,7 +360,6 @@ const MeetingPage: React.FC = () => {
             setConnectionState('connected');
         });
 
-        // Connection state
         webRTCServiceRef.current.onConnectionStateChange((state) => {
             console.log('🔗 [LISTENERS] Connection state changed:', state);
             setConnectionState(state);
@@ -365,7 +376,6 @@ const MeetingPage: React.FC = () => {
             }
         });
 
-        // ICE candidates
         webRTCServiceRef.current.onIceCandidate((candidate) => {
             if (candidate) {
                 console.log('🧊 [LISTENERS] Sending ICE candidate');
@@ -513,6 +523,7 @@ const MeetingPage: React.FC = () => {
         console.log('🟢 [START] isCreatorRef:', isCreatorRef.current);
         console.log('🟢 [START] isCallActive:', isCallActive);
         console.log('🟢 [START] callInitiatedRef:', callInitiatedRef.current);
+        console.log('🟢 [START] Subscription stable:', subscriptionStableRef.current);
 
         if (participants.length < 2) {
             toast.error('Need at least 2 participants to start a call');
@@ -534,8 +545,36 @@ const MeetingPage: React.FC = () => {
             return;
         }
 
+        if (!subscriptionStableRef.current) {
+            toast('Waiting for connection to stabilize...', { icon: '⏳' });
+            setTimeout(() => {
+                if (subscriptionStableRef.current) {
+                    callInitiatedRef.current = true;
+                    startCallAsInitiator();
+                } else {
+                    toast.error('Connection not stable, please try again');
+                }
+            }, 2000);
+            return;
+        }
+
         callInitiatedRef.current = true;
         await startCallAsInitiator();
+    };
+
+    const handleRetryCall = () => {
+        console.log('🔄 [RETRY] Retrying call');
+        callInitiatedRef.current = false;
+        setIsCallActive(false);
+        setRemoteStream(null);
+        setConnectionState('disconnected');
+        if (webRTCServiceRef.current) {
+            webRTCServiceRef.current.close();
+            webRTCServiceRef.current = null;
+        }
+        setTimeout(() => {
+            startCallAsInitiator();
+        }, 1000);
     };
 
     if (isLoading) {
@@ -660,6 +699,14 @@ const MeetingPage: React.FC = () => {
                                     📞 Start Call
                                 </button>
                             )}
+                            {isCreatorRef.current && callInitiatedRef.current && !isCallActive && (
+                                <button
+                                    onClick={handleRetryCall}
+                                    className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                                >
+                                    🔄 Retry Call
+                                </button>
+                            )}
                             {isCallActive && (
                                 <span className="px-3 py-2 bg-green-100 text-green-700 rounded">
                                     🟢 Call Active
@@ -720,6 +767,7 @@ const MeetingPage: React.FC = () => {
                         <h4 className="font-semibold text-yellow-800 text-sm">⏳ Debug Status</h4>
                         <div className="mt-2 text-xs text-yellow-600 space-y-1">
                             <p>WebSocket: <span className="font-bold">{isConnected ? '✅' : '❌'}</span></p>
+                            <p>Subscription Stable: <span className="font-bold">{subscriptionStableRef.current ? '✅' : '❌'}</span></p>
                             <p>Participants: <span className="font-bold">{participants.length}</span></p>
                             <p>Call: <span className="font-bold">{isCallActive ? '📞 Active' : '⏸️ Inactive'}</span></p>
                             <p>Connection: <span className="font-bold">{connectionState}</span></p>
