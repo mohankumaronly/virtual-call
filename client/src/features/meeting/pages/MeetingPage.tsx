@@ -42,7 +42,9 @@ const MeetingPage: React.FC = () => {
     const isProcessingOfferRef = useRef<boolean>(false);
     const answerSentRef = useRef<boolean>(false);
     const subscriptionStableRef = useRef<boolean>(false);
+    const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const retryIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const autoStartAttemptedRef = useRef<boolean>(false);
 
     useEffect(() => {
         console.log('🔵 [LIFECYCLE] MeetingPage mounted, meetingId:', meetingId);
@@ -56,6 +58,10 @@ const MeetingPage: React.FC = () => {
 
         return () => {
             console.log('🔴 [LIFECYCLE] MeetingPage unmounting, cleaning up');
+            if (retryTimeoutRef.current) {
+                clearTimeout(retryTimeoutRef.current);
+                retryTimeoutRef.current = null;
+            }
             if (retryIntervalRef.current) {
                 clearInterval(retryIntervalRef.current);
                 retryIntervalRef.current = null;
@@ -83,12 +89,49 @@ const MeetingPage: React.FC = () => {
         if (isConnected && meetingId && !isWebSocketStable) {
             console.log('🔵 [WEBSOCKET] Subscribing to meeting:', meetingId);
             subscribeToMeeting(meetingId, handleWebSocketMessage);
-            // Set stable after a short delay
-            setTimeout(() => {
-                setIsWebSocketStable(true);
-                subscriptionStableRef.current = true;
-                console.log('✅ [WEBSOCKET] Subscription stable');
-            }, 1500);
+            
+            // Check for stability
+            let attempts = 0;
+            const maxAttempts = 20;
+            
+            if (retryIntervalRef.current) {
+                clearInterval(retryIntervalRef.current);
+            }
+            
+            retryIntervalRef.current = setInterval(() => {
+                attempts++;
+                console.log(`⏳ [WEBSOCKET] Checking stability... attempt ${attempts}/${maxAttempts}`);
+                
+                // Check if we're receiving messages
+                if (isWebSocketStable) {
+                    console.log('✅ [WEBSOCKET] Subscription stable confirmed');
+                    if (retryIntervalRef.current) {
+                        clearInterval(retryIntervalRef.current);
+                        retryIntervalRef.current = null;
+                    }
+                    subscriptionStableRef.current = true;
+                    
+                    // If auto-start was waiting, trigger it now
+                    if (autoStartAttemptedRef.current && !callInitiatedRef.current) {
+                        console.log('📞 [WEBSOCKET] Auto-start triggered after stability');
+                        autoStartAttemptedRef.current = false;
+                        callInitiatedRef.current = true;
+                        setTimeout(() => {
+                            startCallAsInitiator();
+                        }, 1000);
+                    }
+                }
+                
+                if (attempts >= maxAttempts) {
+                    console.warn('⚠️ [WEBSOCKET] Max attempts reached, forcing stable state');
+                    setIsWebSocketStable(true);
+                    subscriptionStableRef.current = true;
+                    if (retryIntervalRef.current) {
+                        clearInterval(retryIntervalRef.current);
+                        retryIntervalRef.current = null;
+                    }
+                }
+            }, 500);
         }
     }, [isConnected, meetingId]);
 
@@ -120,6 +163,17 @@ const MeetingPage: React.FC = () => {
             payloadType: message.payload?.type
         });
 
+        // ✅ Mark as stable when we receive any message
+        if (!isWebSocketStable) {
+            console.log('✅ [WEBSOCKET] Received message, marking as stable');
+            setIsWebSocketStable(true);
+            subscriptionStableRef.current = true;
+            if (retryIntervalRef.current) {
+                clearInterval(retryIntervalRef.current);
+                retryIntervalRef.current = null;
+            }
+        }
+
         if (message.type === 'USER_JOINED') {
             console.log('👤 [WEBSOCKET] User joined:', message.username, 'userId:', message.userId);
             toast.success(`${message.name || message.username} joined the meeting`);
@@ -139,6 +193,7 @@ const MeetingPage: React.FC = () => {
             if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current && isWebSocketStable) {
                 console.log('📞 [AUTO_START] Creator starting call (WebSocket stable)');
                 callInitiatedRef.current = true;
+                autoStartAttemptedRef.current = true;
                 setTimeout(() => {
                     if (subscriptionStableRef.current) {
                         startCallAsInitiator();
@@ -151,39 +206,41 @@ const MeetingPage: React.FC = () => {
                 }, 2000);
             } else if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current && !isWebSocketStable) {
                 console.log('⏳ [AUTO_START] WebSocket not stable, scheduling retry...');
-                // Schedule a retry when WebSocket becomes stable
-                if (retryIntervalRef.current) {
-                    clearInterval(retryIntervalRef.current);
-                }
-                retryIntervalRef.current = setInterval(() => {
-                    if (isWebSocketStable && !callInitiatedRef.current) {
-                        console.log('📞 [AUTO_START] Retry starting call (WebSocket now stable)');
-                        if (retryIntervalRef.current) {
-                            clearInterval(retryIntervalRef.current);
-                            retryIntervalRef.current = null;
-                        }
-                        callInitiatedRef.current = true;
-                        startCallAsInitiator();
-                    } else if (callInitiatedRef.current) {
-                        if (retryIntervalRef.current) {
-                            clearInterval(retryIntervalRef.current);
-                            retryIntervalRef.current = null;
-                        }
-                    }
-                }, 1000);
+                autoStartAttemptedRef.current = true;
+                // Schedule multiple retries
+                let retryCount = 0;
+                const maxRetries = 10;
                 
-                // Timeout after 10 seconds
-                setTimeout(() => {
-                    if (retryIntervalRef.current) {
-                        clearInterval(retryIntervalRef.current);
-                        retryIntervalRef.current = null;
+                if (retryTimeoutRef.current) {
+                    clearTimeout(retryTimeoutRef.current);
+                }
+                
+                const scheduleRetry = () => {
+                    if (retryCount >= maxRetries) {
+                        console.warn('⚠️ [AUTO_START] Max retries reached, giving up');
+                        autoStartAttemptedRef.current = false;
+                        return;
                     }
-                    if (!callInitiatedRef.current && isWebSocketStable) {
-                        console.log('📞 [AUTO_START] Final retry starting call');
-                        callInitiatedRef.current = true;
-                        startCallAsInitiator();
-                    }
-                }, 10000);
+                    
+                    retryCount++;
+                    console.log(`🔄 [AUTO_START] Retry ${retryCount}/${maxRetries} in ${retryCount * 1000}ms`);
+                    
+                    retryTimeoutRef.current = setTimeout(() => {
+                        if (isWebSocketStable && !callInitiatedRef.current) {
+                            console.log('📞 [AUTO_START] Retry starting call (WebSocket now stable)');
+                            autoStartAttemptedRef.current = false;
+                            callInitiatedRef.current = true;
+                            startCallAsInitiator();
+                        } else if (!isWebSocketStable && !callInitiatedRef.current) {
+                            scheduleRetry();
+                        } else {
+                            console.log('⏳ [AUTO_START] Call already in progress or condition not met');
+                            autoStartAttemptedRef.current = false;
+                        }
+                    }, retryCount * 1000);
+                };
+                
+                scheduleRetry();
             }
         } else if (message.type === 'USER_LEFT') {
             console.log('👤 [WEBSOCKET] User left:', message.username);
@@ -193,6 +250,11 @@ const MeetingPage: React.FC = () => {
             setConnectionState('disconnected');
             setRemoteStream(null);
             callInitiatedRef.current = false;
+            autoStartAttemptedRef.current = false;
+            if (retryTimeoutRef.current) {
+                clearTimeout(retryTimeoutRef.current);
+                retryTimeoutRef.current = null;
+            }
             if (retryIntervalRef.current) {
                 clearInterval(retryIntervalRef.current);
                 retryIntervalRef.current = null;
@@ -611,11 +673,16 @@ const MeetingPage: React.FC = () => {
 
     const handleRetryCall = () => {
         console.log('🔄 [RETRY] Retrying call');
+        if (retryTimeoutRef.current) {
+            clearTimeout(retryTimeoutRef.current);
+            retryTimeoutRef.current = null;
+        }
         if (retryIntervalRef.current) {
             clearInterval(retryIntervalRef.current);
             retryIntervalRef.current = null;
         }
         callInitiatedRef.current = false;
+        autoStartAttemptedRef.current = false;
         setIsCallActive(false);
         setRemoteStream(null);
         setConnectionState('disconnected');
@@ -831,6 +898,7 @@ const MeetingPage: React.FC = () => {
                             <p>Initiator: <span className="font-bold">{isInitiator ? '🔵 Yes' : '🔴 No'}</span></p>
                             <p>Remote Stream: <span className="font-bold">{remoteStream ? '✅' : '❌'}</span></p>
                             <p>Answer Sent: <span className="font-bold">{answerSentRef.current ? '✅' : '❌'}</span></p>
+                            <p>Auto-start Attempted: <span className="font-bold">{autoStartAttemptedRef.current ? '✅' : '❌'}</span></p>
                         </div>
                     </div>
                 </div>
