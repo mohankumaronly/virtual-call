@@ -39,8 +39,10 @@ const MeetingPage: React.FC = () => {
     const isCreatorRef = useRef<boolean>(false);
     const callInitiatedRef = useRef<boolean>(false);
     const isProcessingOfferRef = useRef<boolean>(false);
+    const answerSentRef = useRef<boolean>(false);
 
     useEffect(() => {
+        console.log('🔵 [LIFECYCLE] MeetingPage mounted, meetingId:', meetingId);
         if (!meetingId) {
             navigate('/dashboard');
             return;
@@ -49,10 +51,12 @@ const MeetingPage: React.FC = () => {
         fetchParticipants();
 
         if (isConnected) {
+            console.log('🔵 [WEBSOCKET] Subscribing to meeting:', meetingId);
             subscribeToMeeting(meetingId, handleWebSocketMessage);
         }
 
         return () => {
+            console.log('🔴 [LIFECYCLE] MeetingPage unmounting, cleaning up');
             if (meetingId) {
                 unsubscribeFromMeeting(meetingId);
                 if (hasJoinedRef.current) {
@@ -60,9 +64,11 @@ const MeetingPage: React.FC = () => {
                 }
             }
             if (localStreamRef.current) {
+                console.log('🔴 [STREAM] Stopping local stream tracks');
                 localStreamRef.current.getTracks().forEach(track => track.stop());
             }
             if (webRTCServiceRef.current) {
+                console.log('🔴 [WEBRTC] Closing WebRTC connection');
                 webRTCServiceRef.current.close();
             }
         };
@@ -70,39 +76,56 @@ const MeetingPage: React.FC = () => {
 
     // ✅ Effect to handle remoteStream changes
     useEffect(() => {
+        console.log('🟢 [REMOTE_STREAM] remoteStream changed:', remoteStream ? 'Has stream' : 'No stream');
         if (remoteStream && remoteVideoRef.current) {
-            console.log('🎥 Setting remote stream to video element');
+            console.log('🎥 [REMOTE_STREAM] Setting remote stream to video element');
+            console.log('🎥 [REMOTE_STREAM] Stream tracks:', remoteStream.getTracks().length);
             remoteVideoRef.current.srcObject = remoteStream;
             remoteVideoRef.current.onloadedmetadata = () => {
-                console.log('🎥 Remote video metadata loaded');
+                console.log('🎥 [REMOTE_STREAM] Remote video metadata loaded');
                 remoteVideoRef.current?.play().catch(error => {
-                    console.error('Error playing remote video:', error);
+                    console.error('❌ [REMOTE_STREAM] Error playing remote video:', error);
                 });
             };
             remoteVideoRef.current.play().catch(error => {
-                console.error('Error playing remote video:', error);
+                console.error('❌ [REMOTE_STREAM] Error playing remote video:', error);
             });
         }
     }, [remoteStream]);
 
     const handleWebSocketMessage = (message: any) => {
-        console.log('📩 WebSocket message:', message.type, 'from:', message.username);
+        console.log('📩 [WEBSOCKET] Message received:', {
+            type: message.type,
+            from: message.username,
+            userId: message.userId,
+            hasPayload: !!message.payload,
+            payloadType: message.payload?.type
+        });
 
         if (message.type === 'USER_JOINED') {
+            console.log('👤 [WEBSOCKET] User joined:', message.username, 'userId:', message.userId);
             toast.success(`${message.name || message.username} joined the meeting`);
             fetchParticipants();
 
             const isJoiningUserCreator = message.userId === user?.id;
+            console.log('🔍 [AUTO_START] Checking auto-start conditions:', {
+                isCreator: isCreatorRef.current,
+                hasJoined: hasJoinedRef.current,
+                isCallActive,
+                isJoiningUserCreator,
+                callInitiated: callInitiatedRef.current
+            });
 
             // ✅ Auto-start call when second user joins (only if creator and not already in call)
             if (isCreatorRef.current && hasJoinedRef.current && !isCallActive && !isJoiningUserCreator && !callInitiatedRef.current) {
-                console.log('📞 Creator starting call');
+                console.log('📞 [AUTO_START] Creator starting call');
                 callInitiatedRef.current = true;
                 setTimeout(() => {
                     startCallAsInitiator();
                 }, 2000);
             }
         } else if (message.type === 'USER_LEFT') {
+            console.log('👤 [WEBSOCKET] User left:', message.username);
             toast(`${message.username} left the meeting`, { icon: '👋' });
             fetchParticipants();
             setIsCallActive(false);
@@ -114,158 +137,195 @@ const MeetingPage: React.FC = () => {
                 webRTCServiceRef.current = null;
             }
         } else if (message.type === 'OFFER') {
-            console.log('📩 Received OFFER');
+            console.log('📩 [WEBSOCKET] Received OFFER directly');
             handleOffer(message.payload);
         } else if (message.type === 'ANSWER') {
-            console.log('📩 Received ANSWER');
+            console.log('📩 [WEBSOCKET] Received ANSWER directly');
             handleAnswer(message.payload);
         } else if (message.type === 'ICE_CANDIDATE') {
-            console.log('📩 Received ICE_CANDIDATE');
+            console.log('📩 [WEBSOCKET] Received ICE_CANDIDATE directly');
             handleIceCandidate(message.payload);
         } else if (message.type === 'SIGNAL') {
             // Handle SIGNAL wrapper
             const payload = message.payload;
+            console.log('📩 [WEBSOCKET] Received SIGNAL wrapper, payload type:', payload?.type);
             if (payload) {
                 if (payload.type === 'OFFER') {
-                    console.log('📩 Extracted OFFER from SIGNAL');
+                    console.log('📩 [WEBSOCKET] Extracted OFFER from SIGNAL');
                     handleOffer(payload.payload || payload);
                 } else if (payload.type === 'ANSWER') {
-                    console.log('📩 Extracted ANSWER from SIGNAL');
+                    console.log('📩 [WEBSOCKET] Extracted ANSWER from SIGNAL');
                     handleAnswer(payload.payload || payload);
                 } else if (payload.type === 'ICE_CANDIDATE') {
-                    console.log('📩 Extracted ICE_CANDIDATE from SIGNAL');
+                    console.log('📩 [WEBSOCKET] Extracted ICE_CANDIDATE from SIGNAL');
                     handleIceCandidate(payload.payload || payload);
+                } else {
+                    console.log('📩 [WEBSOCKET] Unknown payload type:', payload.type);
                 }
             }
+        } else {
+            console.log('📩 [WEBSOCKET] Unknown message type:', message.type);
         }
     };
 
     // ✅ Handle incoming OFFER
     const handleOffer = async (offer: RTCSessionDescriptionInit) => {
+        console.log('📞 [OFFER] handleOffer called');
+        console.log('📞 [OFFER] Offer type:', offer.type);
+        console.log('📞 [OFFER] isProcessingOffer:', isProcessingOfferRef.current);
+
         if (isProcessingOfferRef.current) {
-            console.log('Already processing an offer');
+            console.log('⏳ [OFFER] Already processing an offer, ignoring');
             return;
         }
 
-        console.log('📩 Processing offer');
+        console.log('📩 [OFFER] Processing offer');
         isProcessingOfferRef.current = true;
+        answerSentRef.current = false;
 
         try {
             // Check if we already have a connection
             if (webRTCServiceRef.current) {
+                console.log('🔴 [OFFER] Closing existing WebRTC connection');
                 webRTCServiceRef.current.close();
                 webRTCServiceRef.current = null;
             }
 
-            // Create new WebRTC service as non-initiator
+            console.log('🎥 [OFFER] Creating new WebRTCService as non-initiator');
             webRTCServiceRef.current = new WebRTCService();
             setupWebRTCListeners();
 
             // Add local stream if available
             if (localStreamRef.current) {
+                console.log('📷 [OFFER] Adding local stream to WebRTC service');
                 webRTCServiceRef.current.setLocalStream(localStreamRef.current);
+            } else {
+                console.warn('⚠️ [OFFER] No local stream available');
             }
 
             // Set remote description (offer)
-            console.log('📡 Setting remote description...');
+            console.log('📡 [OFFER] Setting remote description...');
             await webRTCServiceRef.current.setRemoteDescription(offer);
-            console.log('✅ Remote description set');
+            console.log('✅ [OFFER] Remote description set successfully');
 
             // Create and send answer
-            console.log('📞 Creating answer...');
+            console.log('📞 [OFFER] Creating answer...');
             const answer = await webRTCServiceRef.current.createAnswer();
-            console.log('✅ Answer created successfully');
+            console.log('✅ [OFFER] Answer created successfully');
+            console.log('📞 [OFFER] Answer type:', answer.type);
 
             // ✅ Send answer via WebSocket
-            console.log('📤 Sending answer...');
+            console.log('📤 [OFFER] Sending answer via WebSocket...');
+            console.log('📤 [OFFER] MeetingId:', meetingId);
             sendSignal(meetingId!, {
                 type: 'ANSWER',
                 payload: answer
             });
-            console.log('📤 Answer sent successfully');
-
-            // Process any pending ICE candidates
-            // (If you have a pendingIceCandidatesRef)
+            answerSentRef.current = true;
+            console.log('✅ [OFFER] Answer sent successfully!');
 
             toast.success('Connected to peer!');
         } catch (error) {
-            console.error('❌ Error handling offer:', error);
-            toast.error('Failed to connect');
+            console.error('❌ [OFFER] Error handling offer:', error);
+            console.error('❌ [OFFER] Error details:', error instanceof Error ? error.message : 'Unknown error');
+            toast.error('Failed to connect: ' + (error instanceof Error ? error.message : 'Unknown error'));
         } finally {
             isProcessingOfferRef.current = false;
+            console.log('🔓 [OFFER] Offer processing complete, isProcessingOffer:', isProcessingOfferRef.current);
         }
     };
 
     // ✅ Handle incoming ANSWER
     const handleAnswer = async (answer: RTCSessionDescriptionInit) => {
+        console.log('📞 [ANSWER] handleAnswer called');
+        console.log('📞 [ANSWER] Answer type:', answer.type);
+        console.log('📞 [ANSWER] WebRTC service exists:', !!webRTCServiceRef.current);
+
         if (!webRTCServiceRef.current) {
-            console.warn('No WebRTC service for answer');
+            console.warn('⚠️ [ANSWER] No WebRTC service for answer');
             return;
         }
 
         try {
+            console.log('📡 [ANSWER] Setting remote answer...');
             await webRTCServiceRef.current.setRemoteDescription(answer);
-            console.log('✅ Remote answer set');
+            console.log('✅ [ANSWER] Remote answer set successfully');
             toast.success('Call connected!');
         } catch (error) {
-            console.error('❌ Error handling answer:', error);
+            console.error('❌ [ANSWER] Error handling answer:', error);
             toast.error('Failed to set answer');
         }
     };
 
     // ✅ Handle incoming ICE CANDIDATE
     const handleIceCandidate = async (candidate: RTCIceCandidate) => {
+        console.log('🧊 [ICE] handleIceCandidate called');
+        console.log('🧊 [ICE] Candidate exists:', !!candidate);
+        console.log('🧊 [ICE] WebRTC service exists:', !!webRTCServiceRef.current);
+
         if (!webRTCServiceRef.current) {
-            console.warn('No WebRTC service for ICE candidate');
+            console.warn('⚠️ [ICE] No WebRTC service for ICE candidate');
             return;
         }
 
         try {
+            console.log('🧊 [ICE] Adding ICE candidate...');
             await webRTCServiceRef.current.addIceCandidate(candidate);
-            console.log('✅ ICE candidate added');
+            console.log('✅ [ICE] ICE candidate added successfully');
         } catch (error) {
-            console.error('❌ Error adding ICE candidate:', error);
+            console.error('❌ [ICE] Error adding ICE candidate:', error);
         }
     };
 
     // ✅ Start call as initiator (creator)
     const startCallAsInitiator = async () => {
+        console.log('📞 [INITIATOR] startCallAsInitiator called');
+        console.log('📞 [INITIATOR] Local stream exists:', !!localStreamRef.current);
+
         if (!localStreamRef.current) {
-            console.error('❌ No local stream');
+            console.error('❌ [INITIATOR] No local stream');
             toast.error('Camera not ready');
             return;
         }
 
-        console.log('📞 Starting call as initiator');
+        console.log('📞 [INITIATOR] Starting call as initiator');
         setIsInitiator(true);
 
         // Create WebRTC service as initiator
         if (webRTCServiceRef.current) {
+            console.log('🔴 [INITIATOR] Closing existing WebRTC connection');
             webRTCServiceRef.current.close();
             webRTCServiceRef.current = null;
         }
 
+        console.log('🎥 [INITIATOR] Creating new WebRTCService as initiator');
         webRTCServiceRef.current = new WebRTCService();
         setupWebRTCListeners();
 
         // Add local stream
+        console.log('📷 [INITIATOR] Adding local stream');
         webRTCServiceRef.current.setLocalStream(localStreamRef.current);
 
         try {
             // Create offer
+            console.log('📞 [INITIATOR] Creating offer...');
             const offer = await webRTCServiceRef.current.createOffer();
-            console.log('✅ Offer created');
+            console.log('✅ [INITIATOR] Offer created successfully');
+            console.log('📞 [INITIATOR] Offer type:', offer.type);
 
             // Send offer via WebSocket
+            console.log('📤 [INITIATOR] Sending offer via WebSocket...');
+            console.log('📤 [INITIATOR] MeetingId:', meetingId);
             sendSignal(meetingId!, {
                 type: 'OFFER',
                 payload: offer
             });
-            console.log('📤 Offer sent');
+            console.log('✅ [INITIATOR] Offer sent successfully!');
 
             toast('Calling participant...', { icon: '📞' });
         } catch (error) {
-            console.error('❌ Error creating offer:', error);
+            console.error('❌ [INITIATOR] Error creating offer:', error);
+            console.error('❌ [INITIATOR] Error details:', error instanceof Error ? error.message : 'Unknown error');
             toast.error('Failed to start call');
             callInitiatedRef.current = false;
         }
@@ -273,12 +333,16 @@ const MeetingPage: React.FC = () => {
 
     // ✅ Setup WebRTC listeners
     const setupWebRTCListeners = () => {
-        if (!webRTCServiceRef.current) return;
+        console.log('🎥 [LISTENERS] Setting up WebRTC listeners');
+        if (!webRTCServiceRef.current) {
+            console.warn('⚠️ [LISTENERS] No WebRTC service to setup listeners');
+            return;
+        }
 
         // Remote stream
         webRTCServiceRef.current.onRemoteStream((stream) => {
-            console.log('🎥 Remote stream received!');
-            console.log('🎥 Remote stream tracks:', stream.getTracks());
+            console.log('🎥 [LISTENERS] Remote stream received!');
+            console.log('🎥 [LISTENERS] Remote stream tracks:', stream.getTracks().length);
             setRemoteStream(stream);
             setIsCallActive(true);
             setConnectionState('connected');
@@ -286,12 +350,14 @@ const MeetingPage: React.FC = () => {
 
         // Connection state
         webRTCServiceRef.current.onConnectionStateChange((state) => {
-            console.log('🔗 Connection state:', state);
+            console.log('🔗 [LISTENERS] Connection state changed:', state);
             setConnectionState(state);
             if (state === 'connected') {
+                console.log('✅ [LISTENERS] Call connected!');
                 setIsCallActive(true);
                 toast.success('Call established!');
             } else if (state === 'disconnected' || state === 'failed') {
+                console.log('❌ [LISTENERS] Call disconnected or failed');
                 setIsCallActive(false);
                 setRemoteStream(null);
                 callInitiatedRef.current = false;
@@ -302,31 +368,36 @@ const MeetingPage: React.FC = () => {
         // ICE candidates
         webRTCServiceRef.current.onIceCandidate((candidate) => {
             if (candidate) {
-                console.log('🧊 Sending ICE candidate');
+                console.log('🧊 [LISTENERS] Sending ICE candidate');
                 sendSignal(meetingId!, {
                     type: 'ICE_CANDIDATE',
                     payload: candidate
                 });
             } else {
-                console.log('🧊 ICE gathering complete');
+                console.log('🧊 [LISTENERS] ICE gathering complete');
             }
         });
     };
 
     const fetchMeeting = async () => {
+        console.log('📡 [FETCH] Fetching meeting:', meetingId);
         setIsLoading(true);
         try {
             const response = await api.get<ApiResponse<MeetingResponse>>(`/api/meetings/${meetingId}`);
+            console.log('📡 [FETCH] Meeting response:', response.data);
             if (response.data.success && response.data.data) {
                 setMeeting(response.data.data);
                 isCreatorRef.current = response.data.data.createdBy === user?.id;
-                console.log('👑 isCreatorRef:', isCreatorRef.current);
+                console.log('👑 [FETCH] isCreatorRef:', isCreatorRef.current);
+                console.log('👑 [FETCH] Meeting created by:', response.data.data.createdBy);
+                console.log('👑 [FETCH] Current user:', user?.id);
             } else {
                 toast.error(response.data.message || 'Meeting not found');
                 navigate('/dashboard');
             }
         } catch (error: any) {
             const message = error.response?.data?.message || 'Failed to load meeting';
+            console.error('❌ [FETCH] Error fetching meeting:', error);
             toast.error(message);
             navigate('/dashboard');
         } finally {
@@ -335,9 +406,11 @@ const MeetingPage: React.FC = () => {
     };
 
     const fetchParticipants = async () => {
+        console.log('📡 [FETCH] Fetching participants for meeting:', meetingId);
         if (!meetingId) return;
         try {
             const response = await api.get<ApiResponse<any[]>>(`/api/meetings/${meetingId}/participants`);
+            console.log('📡 [FETCH] Participants response:', response.data);
             if (response.data.success && response.data.data) {
                 const participantList = response.data.data.map((p: any) => ({
                     userId: p.userId,
@@ -346,32 +419,40 @@ const MeetingPage: React.FC = () => {
                     joinedAt: p.joinedAt
                 }));
                 setParticipants(participantList);
+                console.log('👥 [FETCH] Participants:', participantList.length);
             }
         } catch (error) {
-            console.error('Failed to fetch participants:', error);
+            console.error('❌ [FETCH] Error fetching participants:', error);
         }
     };
 
     const handleJoinMeeting = async () => {
+        console.log('📞 [JOIN] handleJoinMeeting called');
         if (!meetingId) return;
         setIsJoining(true);
         try {
+            console.log('📞 [JOIN] Joining meeting via API:', meetingId);
             const response = await api.post<ApiResponse>(`/api/meetings/${meetingId}/join`);
+            console.log('📞 [JOIN] Join response:', response.data);
             if (response.data.success) {
                 toast.success(response.data.message);
                 hasJoinedRef.current = true;
+                console.log('✅ [JOIN] Joined meeting successfully');
                 await fetchMeeting();
                 await fetchParticipants();
 
                 if (isConnected && user) {
+                    console.log('📤 [JOIN] Notifying via WebSocket');
                     joinMeeting(meetingId);
                 }
+                console.log('📷 [JOIN] Setting showCamera to true');
                 setShowCamera(true);
             } else {
                 toast.error(response.data.message || 'Failed to join meeting');
             }
         } catch (error: any) {
             const message = error.response?.data?.message || 'Failed to join meeting';
+            console.error('❌ [JOIN] Error joining meeting:', error);
             toast.error(message);
         } finally {
             setIsJoining(false);
@@ -379,18 +460,20 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleStreamReady = (stream: MediaStream) => {
-        console.log('📷 Camera ready');
+        console.log('📷 [CAMERA] Camera ready!');
+        console.log('📷 [CAMERA] Stream tracks:', stream.getTracks().length);
         localStreamRef.current = stream;
         toast.success('Camera is ready!');
     };
 
     const handleStreamError = (error: Error) => {
-        console.error('Camera error:', error);
+        console.error('❌ [CAMERA] Camera error:', error);
         toast.error('Failed to access camera. Please check permissions.');
     };
 
     const handleCopyLink = () => {
         const link = `${window.location.origin}/meeting/${meetingId}`;
+        console.log('📋 [LINK] Copying link:', link);
         navigator.clipboard.writeText(link).then(() => {
             toast.success('Meeting link copied to clipboard!');
         }).catch(() => {
@@ -399,12 +482,15 @@ const MeetingPage: React.FC = () => {
     };
 
     const handleEndMeeting = async () => {
+        console.log('⛔ [END] handleEndMeeting called');
         if (!meetingId) return;
         try {
             const response = await api.post<ApiResponse>(`/api/meetings/${meetingId}/end`);
+            console.log('⛔ [END] End meeting response:', response.data);
             if (response.data.success) {
                 toast.success(response.data.message);
                 if (webRTCServiceRef.current) {
+                    console.log('🔴 [END] Closing WebRTC connection');
                     webRTCServiceRef.current.close();
                     webRTCServiceRef.current = null;
                 }
@@ -416,11 +502,18 @@ const MeetingPage: React.FC = () => {
             }
         } catch (error: any) {
             const message = error.response?.data?.message || 'Failed to end meeting';
+            console.error('❌ [END] Error ending meeting:', error);
             toast.error(message);
         }
     };
 
     const handleStartCall = async () => {
+        console.log('🟢 [START] handleStartCall called');
+        console.log('🟢 [START] Participants:', participants.length);
+        console.log('🟢 [START] isCreatorRef:', isCreatorRef.current);
+        console.log('🟢 [START] isCallActive:', isCallActive);
+        console.log('🟢 [START] callInitiatedRef:', callInitiatedRef.current);
+
         if (participants.length < 2) {
             toast.error('Need at least 2 participants to start a call');
             return;
@@ -527,6 +620,9 @@ const MeetingPage: React.FC = () => {
                                             {isInitiator && (
                                                 <p className="text-xs text-green-400 mt-1">🔵 Caller</p>
                                             )}
+                                            {!remoteStream && (
+                                                <p className="text-xs text-yellow-400 mt-1">⏳ Remote stream not yet received</p>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -621,7 +717,7 @@ const MeetingPage: React.FC = () => {
                     </div>
 
                     <div className="mt-4 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                        <h4 className="font-semibold text-yellow-800 text-sm">⏳ Status</h4>
+                        <h4 className="font-semibold text-yellow-800 text-sm">⏳ Debug Status</h4>
                         <div className="mt-2 text-xs text-yellow-600 space-y-1">
                             <p>WebSocket: <span className="font-bold">{isConnected ? '✅' : '❌'}</span></p>
                             <p>Participants: <span className="font-bold">{participants.length}</span></p>
@@ -629,6 +725,8 @@ const MeetingPage: React.FC = () => {
                             <p>Connection: <span className="font-bold">{connectionState}</span></p>
                             <p>Role: <span className="font-bold">{isCreatorRef.current ? '👑 Creator' : '👤 Participant'}</span></p>
                             <p>Initiator: <span className="font-bold">{isInitiator ? '🔵 Yes' : '🔴 No'}</span></p>
+                            <p>Remote Stream: <span className="font-bold">{remoteStream ? '✅' : '❌'}</span></p>
+                            <p>Answer Sent: <span className="font-bold">{answerSentRef.current ? '✅' : '❌'}</span></p>
                         </div>
                     </div>
                 </div>

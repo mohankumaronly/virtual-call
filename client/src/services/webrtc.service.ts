@@ -50,12 +50,12 @@ export class WebRTCService {
             console.log('🎥 Remote track received:', event.track.kind);
             console.log('🎥 Remote track ID:', event.track.id);
             console.log('🎥 Remote streams:', event.streams.length);
-            
+
             if (event.streams.length > 0) {
                 this.remoteStream = event.streams[0];
                 console.log('🎥 Remote stream ID:', this.remoteStream.id);
                 console.log('🎥 Remote stream tracks:', this.remoteStream.getTracks().length);
-                
+
                 if (this.onRemoteStreamCallback) {
                     this.onRemoteStreamCallback(event.streams[0]);
                 }
@@ -108,7 +108,7 @@ export class WebRTCService {
     public setLocalStream(stream: MediaStream): void {
         console.log('🎥 setLocalStream called');
         console.log('🎥 Stream tracks:', stream.getTracks().length);
-        
+
         if (!this.peerConnection) {
             console.error('🎥 Peer connection is null');
             return;
@@ -136,7 +136,7 @@ export class WebRTCService {
                 console.error('🎥 Error adding track:', e);
             }
         });
-        
+
         console.log('🎥 Local stream set successfully');
     }
 
@@ -180,22 +180,30 @@ export class WebRTCService {
         }
     }
 
+    // Add this to the createAnswer method in WebRTCService.ts
     public async createAnswer(): Promise<RTCSessionDescriptionInit> {
         if (!this.peerConnection) {
             throw new Error('Peer connection not initialized');
         }
 
         try {
-            console.log('📞 Creating answer...');
+            console.log('📞 [ANSWER] Creating answer...');
+            console.log('📞 [ANSWER] Current signaling state:', this.peerConnection.signalingState);
+            console.log('📞 [ANSWER] Remote description:', this.peerConnection.remoteDescription?.type);
+            console.log('📞 [ANSWER] Local description:', this.peerConnection.localDescription?.type);
+
             const answer = await this.peerConnection.createAnswer({
                 offerToReceiveAudio: true,
                 offerToReceiveVideo: true,
             });
+            console.log('📞 [ANSWER] Answer created:', answer.type);
+
             await this.peerConnection.setLocalDescription(answer);
-            console.log('🎥 Answer created and set as local description');
+            console.log('✅ [ANSWER] Answer set as local description');
+            console.log('📞 [ANSWER] New signaling state:', this.peerConnection.signalingState);
             return answer;
         } catch (error) {
-            console.error('🎥 Failed to create answer:', error);
+            console.error('❌ [ANSWER] Failed to create answer:', error);
             throw error;
         }
     }
